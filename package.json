@@ -1,0 +1,86 @@
+{
+  "name": "@lpm.dev/neo.dom",
+  "version": "1.0.0",
+  "description": "Lightweight, security-focused DOM parser for Node.js (zero dependencies)",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./parser": {
+      "types": "./dist/parser/parser.d.ts",
+      "import": "./dist/parser/parser.js",
+      "require": "./dist/parser/parser.cjs"
+    },
+    "./dom": {
+      "types": "./dist/dom/index.d.ts",
+      "import": "./dist/dom/index.js",
+      "require": "./dist/dom/index.cjs"
+    },
+    "./traversal": {
+      "types": "./dist/traversal/index.d.ts",
+      "import": "./dist/traversal/index.js",
+      "require": "./dist/traversal/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    ".lpm",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "vitest bench",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build && npm run test"
+  },
+  "keywords": [
+    "dom",
+    "parser",
+    "html",
+    "dom-parser",
+    "lightweight",
+    "security",
+    "xss",
+    "sanitize",
+    "node",
+    "zero-dependencies",
+    "typescript",
+    "esm",
+    "tree-shakeable"
+  ],
+  "author": "neo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ne-ooo/neo.dom"
+  },
+  "homepage": "https://github.com/ne-ooo/neo.dom#readme",
+  "bugs": {
+    "url": "https://github.com/ne-ooo/neo.dom/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
