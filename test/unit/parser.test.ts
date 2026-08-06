@@ -135,7 +135,7 @@ describe('DOMParser', () => {
       const parser = new DOMParser()
       const doc = parser.parseFromString('<!-- comment -->', 'text/html')
 
-      const comment = doc.body.firstChild
+      const comment = doc.firstChild
       expect(comment?.nodeType).toBe(NodeType.COMMENT_NODE)
       expect(comment?.nodeValue).toBe(' comment ')
     })
@@ -144,7 +144,7 @@ describe('DOMParser', () => {
       const parser = new DOMParser()
       const doc = parser.parseFromString('<!-- <div>test</div> -->', 'text/html')
 
-      const comment = doc.body.firstChild
+      const comment = doc.firstChild
       expect(comment?.nodeValue).toBe(' <div>test</div> ')
     })
   })

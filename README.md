@@ -1,6 +1,6 @@
 # @lpm.dev/neo.dom
 
-Lightweight, security-focused DOM parser for Node.js. Zero dependencies, full TypeScript support, tree-shakeable.
+HTML5-compliant HTML parsing and a focused DOM implementation for Node.js. Parsing is powered by `parse5`; the package provides ESM, CommonJS, and TypeScript declarations.
 
 ## Install
 
@@ -8,184 +8,116 @@ Lightweight, security-focused DOM parser for Node.js. Zero dependencies, full Ty
 lpm install @lpm.dev/neo.dom
 ```
 
-## Quick Start
+## Quick start
 
 ```typescript
 import { DOMParser } from '@lpm.dev/neo.dom'
 
-const parser = new DOMParser()
-const doc = parser.parseFromString('<p>Hello <strong>world</strong></p>', 'text/html')
+const doc = new DOMParser().parseFromString(
+  '<p>Hello <strong>world</strong></p>',
+  'text/html'
+)
 
-console.log(doc.body?.innerHTML)
+console.log(doc.body.innerHTML)
 // '<p>Hello <strong>world</strong></p>'
 
-const p = doc.querySelector('p')
-console.log(p?.textContent)
+console.log(doc.body.firstChild?.textContent)
 // 'Hello world'
 ```
 
-## Features
+## Parsing behavior
 
-- **Full DOM API** — `Document`, `Element`, `Text`, `Comment`, `DocumentFragment`
-- **Parsing** — Parse HTML strings server-side with `DOMParser`
-- **Querying** — `querySelector`, `querySelectorAll`, `getElementById`, `getElementsByTagName`, `getElementsByClassName`
-- **Traversal** — `NodeIterator` and `TreeWalker` with filter support
-- **Security** — XSS protection, mXSS prevention, attribute sanitization
-- **Zero dependencies** — no external runtime dependencies
-- **TypeScript** — full type declarations included
-- **Tree-shakeable** — sub-path exports for each module
-
-## API
-
-### DOMParser
+`DOMParser` follows HTML5 tokenization and tree-construction rules. It creates an `HTML` document element with `HEAD` and `BODY` children, applies browser-style error recovery, decodes HTML character references, and tracks HTML, SVG, and MathML namespaces.
 
 ```typescript
-import { DOMParser } from '@lpm.dev/neo.dom'
-
-const parser = new DOMParser()
-const doc = parser.parseFromString('<html><body><p>Hello</p></body></html>', 'text/html')
-```
-
-### Document
-
-```typescript
-// Create elements
-const div = doc.createElement('div')
-const text = doc.createTextNode('Hello')
-const comment = doc.createComment('a comment')
-const fragment = doc.createDocumentFragment()
-
-// Query
-const el = doc.getElementById('my-id')
-const els = doc.getElementsByTagName('p')
-const cls = doc.getElementsByClassName('my-class')
-const found = doc.querySelector('.selector')
-const all = doc.querySelectorAll('p, div')
-```
-
-### Element
-
-```typescript
-// Attributes
-el.getAttribute('href')
-el.setAttribute('class', 'active')
-el.removeAttribute('disabled')
-el.hasAttribute('hidden')
-el.toggleAttribute('checked')
-
-// Content
-el.innerHTML = '<span>new content</span>'
-el.textContent = 'plain text'
-console.log(el.outerHTML)
-
-// ClassList
-el.classList.add('foo')
-el.classList.remove('bar')
-el.classList.toggle('active')
-el.classList.contains('foo')   // true
-
-// Query
-el.matches('.selector')
-el.closest('.parent')
-el.querySelector('span')
-el.querySelectorAll('span')
-```
-
-### Node
-
-```typescript
-// Manipulation
-parent.appendChild(child)
-parent.insertBefore(newNode, referenceNode)
-parent.removeChild(child)
-parent.replaceChild(newNode, oldNode)
-node.cloneNode(true)   // deep clone
-node.contains(other)
-node.normalize()       // merge adjacent text nodes
-```
-
-### NodeIterator
-
-```typescript
-import { DOMParser, NodeFilter } from '@lpm.dev/neo.dom'
-
-const doc = new DOMParser().parseFromString('<div><p>one</p><p>two</p></div>', 'text/html')
-
-const iter = doc.createNodeIterator(
-  doc,
-  NodeFilter.SHOW_ELEMENT,
-  (node) => node.nodeName === 'P' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+const doc = new DOMParser().parseFromString(
+  '<!doctype html><html><head><title>T</title></head><body><p>x</p></body></html>',
+  'text/html'
 )
 
-let node
-while ((node = iter.nextNode())) {
-  console.log(node.textContent)
-}
-// 'one'
-// 'two'
+doc.documentElement.nodeName // 'HTML'
+doc.head.nodeName            // 'HEAD'
+doc.body.nodeName            // 'BODY'
 ```
 
-### TreeWalker
+Comments and doctypes can be children of the document rather than the body. Elements such as `title`, `meta`, `style`, and `script` can be placed in the head according to HTML parsing rules.
+
+### Resource limits
+
+`DOMParser` applies finite limits before and after HTML5 tree construction. The defaults are a 10 MiB input, 100,000 parsed nodes, 2,048 levels, and 1,024 attributes on one element. A limit violation throws a descriptive `RangeError`.
+
+```typescript
+const parser = new DOMParser({
+  maxInputLength: 1_000_000,
+  maxNodes: 20_000,
+  maxDepth: 512,
+  maxAttributesPerElement: 256,
+})
+```
+
+Set smaller limits for endpoints with tighter request budgets. Set larger limits only when deeply nested trusted documents are an expected input.
+
+## Supported DOM subset
+
+```typescript
+const element = doc.createElement('div')
+const text = doc.createTextNode('Hello')
+const comment = doc.createComment('note')
+const fragment = doc.createDocumentFragment()
+
+element.setAttribute('class', 'active')
+element.getAttribute('class')
+element.hasAttribute('class')
+element.removeAttribute('class')
+
+element.appendChild(text)
+element.insertBefore(comment, text)
+element.removeChild(comment)
+element.cloneNode(true)
+
+console.log(element.textContent)
+console.log(element.innerHTML)
+```
+
+Tree mutations reject cycles and invalid child types. Inserting a `DocumentFragment` moves its children into the target and empties the fragment. HTML attribute names are case-insensitive; SVG and MathML attribute names preserve case.
+
+This is not a full browser DOM. CSS selectors, events, layout, script execution, stylesheets, and browser globals are not implemented. The `innerHTML` setter currently creates a text node; it does not parse its input.
+
+## Traversal
 
 ```typescript
 import { DOMParser, NodeFilter } from '@lpm.dev/neo.dom'
 
-const doc = new DOMParser().parseFromString('<div><p>one</p><p>two</p></div>', 'text/html')
+const doc = new DOMParser().parseFromString('<p>one</p><p>two</p>', 'text/html')
+const iterator = doc.createNodeIterator(doc.body, NodeFilter.SHOW_ELEMENT)
 
-const walker = doc.createTreeWalker(doc, NodeFilter.SHOW_ELEMENT)
-
-walker.firstChild()                   // <html>
-walker.nextNode()                     // <head>
-walker.nextSibling()                  // <body>
-console.log(walker.currentNode.nodeName)  // 'BODY'
+let node
+while ((node = iterator.nextNode())) {
+  console.log(node.nodeName)
+}
 ```
 
-### Sub-path Imports
+`NodeIterator` and `TreeWalker` support `whatToShow` masks and filter callbacks.
+`TreeWalker` distinguishes `FILTER_SKIP` from `FILTER_REJECT`, including during reverse traversal. Maintained sibling links keep sequential sibling traversal linear in the number of visited nodes.
+
+## Security boundary
+
+`@lpm.dev/neo.dom` is a parser, not a sanitizer.
+
+- Parsing never executes scripts inside Node.js.
+- Script elements, event-handler attributes, `javascript:` URLs, dangerous CSS, and data URLs are preserved as DOM data.
+- Serializing a parsed tree does not make untrusted HTML safe to insert into a browser.
+- Apply a dedicated allowlist sanitizer before rendering untrusted output.
+
+HTML5-compliant parsing reduces browser/parser disagreement, but it does not replace sanitization or a Content Security Policy.
+
+## Subpath imports
 
 ```typescript
-// Parser only
 import { DOMParser } from '@lpm.dev/neo.dom/parser'
-
-// DOM classes only
 import { Document, Element, Node } from '@lpm.dev/neo.dom/dom'
-
-// Traversal only
 import { NodeIterator, TreeWalker, NodeFilter } from '@lpm.dev/neo.dom/traversal'
 ```
-
-## Node Types
-
-```typescript
-import { NodeType } from '@lpm.dev/neo.dom'
-
-NodeType.ELEMENT_NODE           // 1
-NodeType.TEXT_NODE              // 3
-NodeType.COMMENT_NODE           // 8
-NodeType.DOCUMENT_NODE          // 9
-NodeType.DOCUMENT_FRAGMENT_NODE // 11
-```
-
-## NodeFilter Constants
-
-```typescript
-import { NodeFilter } from '@lpm.dev/neo.dom'
-
-NodeFilter.SHOW_ALL       // 0xFFFFFFFF
-NodeFilter.SHOW_ELEMENT   // 0x1
-NodeFilter.SHOW_TEXT      // 0x4
-NodeFilter.FILTER_ACCEPT  // 1
-NodeFilter.FILTER_REJECT  // 2
-NodeFilter.FILTER_SKIP    // 3
-```
-
-## Security
-
-`@lpm.dev/neo.dom` includes built-in XSS protection:
-
-- Script tags and `javascript:` URLs are neutralized during parsing
-- Event handler attributes (`onclick`, `onerror`, etc.) are sanitized
-- mXSS (mutation-based XSS) attacks are prevented
-- Malformed HTML is handled safely
 
 ## License
 

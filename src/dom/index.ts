@@ -4,4 +4,4 @@
 
 export { Node } from './node.js'
 export { Element } from './element.js'
-export { Document, Text, Comment, DocumentFragment } from './document.js'
+export { Document, Text, Comment, DocumentFragment, DocumentType } from './document.js'

@@ -1,7 +1,7 @@
 /**
  * @lpm.dev/neo.dom - Lightweight DOM Parser for Node.js
  *
- * Security-focused, minimal DOM implementation for server-side HTML parsing
+ * HTML5-compliant parsing with a minimal DOM implementation for Node.js
  *
  * @example
  * import { DOMParser } from '@lpm.dev/neo.dom'
@@ -14,13 +14,14 @@
  */
 
 // Main exports
-export { DOMParser } from './parser/parser.js'
-export { Document, Text, Comment, DocumentFragment } from './dom/document.js'
+export { DOMParser, DEFAULT_DOM_PARSER_OPTIONS } from './parser/parser.js'
+export { Document, Text, Comment, DocumentFragment, DocumentType } from './dom/document.js'
 export { Element } from './dom/element.js'
 export { Node } from './dom/node.js'
+export { NodeIterator, TreeWalker } from './traversal/index.js'
 
 // Constants
-export { NodeType, NodeFilter, VOID_ELEMENTS } from './utils/constants.js'
+export { NodeType, NodeFilter, VOID_ELEMENTS, HTML_NAMESPACE } from './utils/constants.js'
 
 // Types
 export type {
@@ -30,11 +31,13 @@ export type {
   Comment as IComment,
   Document as IDocument,
   DocumentFragment as IDocumentFragment,
+  DocumentType as IDocumentType,
   NodeList,
   Attr,
   NamedNodeMap,
-  NodeIterator,
-  TreeWalker,
+  NodeIterator as INodeIterator,
+  TreeWalker as ITreeWalker,
   Token,
   TokenType,
+  DOMParserOptions,
 } from './types.js'

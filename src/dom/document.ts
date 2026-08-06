@@ -10,6 +10,7 @@ import type {
   Text as IText,
   Comment as IComment,
   DocumentFragment as IDocumentFragment,
+  DocumentType as IDocumentType,
   NodeIterator as INodeIterator,
   TreeWalker as ITreeWalker,
   NodeFilterCallback,
@@ -17,6 +18,8 @@ import type {
 import { Node } from './node.js'
 import { Element } from './element.js'
 import { NodeType } from '../utils/constants.js'
+import { NodeIterator } from '../traversal/iterator.js'
+import { TreeWalker } from '../traversal/tree-walker.js'
 
 /**
  * Text node class
@@ -35,6 +38,18 @@ export class Text extends Node implements IText {
 
   override set nodeValue(value: string | null) {
     this.data = value ?? ''
+  }
+
+  override get textContent(): string {
+    return this.nodeValue
+  }
+
+  override set textContent(value: string | null) {
+    this.nodeValue = value
+  }
+
+  protected override cloneShallow(): Text {
+    return new Text(this.data)
   }
 }
 
@@ -56,6 +71,18 @@ export class Comment extends Node implements IComment {
   override set nodeValue(value: string | null) {
     this.data = value ?? ''
   }
+
+  override get textContent(): string {
+    return this.nodeValue
+  }
+
+  override set textContent(value: string | null) {
+    this.nodeValue = value
+  }
+
+  protected override cloneShallow(): Comment {
+    return new Comment(this.data)
+  }
 }
 
 /**
@@ -71,20 +98,57 @@ export class DocumentFragment extends Node implements IDocumentFragment {
       node => node.nodeType === NodeType.ELEMENT_NODE
     ) as IElement[]
   }
+
+  protected override cloneShallow(): DocumentFragment {
+    return new DocumentFragment()
+  }
+
+  protected override createTextContentNode(value: string): Text {
+    return new Text(value)
+  }
+}
+
+/**
+ * Document type declaration.
+ */
+export class DocumentType extends Node implements IDocumentType {
+  readonly name: string
+  readonly publicId: string
+  readonly systemId: string
+
+  constructor(name: string, publicId: string = '', systemId: string = '') {
+    super(NodeType.DOCUMENT_TYPE_NODE, name, null)
+    this.name = name
+    this.publicId = publicId
+    this.systemId = systemId
+  }
+
+  protected override cloneShallow(): DocumentType {
+    return new DocumentType(this.name, this.publicId, this.systemId)
+  }
 }
 
 /**
  * Document class
  */
 export class Document extends Node implements IDocument {
+  private _documentElement: Element
+  private _head: Element
   private _body: Element
 
   constructor() {
     super(NodeType.DOCUMENT_NODE, '#document', null)
 
-    // Create body element
+    this._documentElement = new Element('html')
+    this._head = new Element('head')
     this._body = new Element('body')
-    this.appendChild(this._body)
+    this.appendChild(this._documentElement)
+    this._documentElement.appendChild(this._head)
+    this._documentElement.appendChild(this._body)
+  }
+
+  get head(): IElement {
+    return this._head
   }
 
   get body(): IElement {
@@ -92,9 +156,11 @@ export class Document extends Node implements IDocument {
   }
 
   get documentElement(): IElement {
-    // For our simplified implementation, return body
-    // In real DOM, this would be <html> element
-    return this._body
+    return this._documentElement
+  }
+
+  override cloneNode(_deep: boolean = false): never {
+    throw new Error('Document.cloneNode() is not supported')
   }
 
   createTextNode(text: string): IText {
@@ -118,8 +184,6 @@ export class Document extends Node implements IDocument {
     whatToShow: number,
     filter?: NodeFilterCallback
   ): INodeIterator {
-    // Import dynamically to avoid circular dependency
-    const { NodeIterator } = require('../traversal/iterator.js')
     return new NodeIterator(root, whatToShow, filter ?? null)
   }
 
@@ -128,8 +192,6 @@ export class Document extends Node implements IDocument {
     whatToShow: number,
     filter?: NodeFilterCallback
   ): ITreeWalker {
-    // Import dynamically to avoid circular dependency
-    const { TreeWalker } = require('../traversal/tree-walker.js')
     return new TreeWalker(root, whatToShow, filter ?? null)
   }
 }
