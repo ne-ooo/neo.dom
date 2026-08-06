@@ -1,6 +1,6 @@
 ---
 name: getting-started
-description: How to import and use neo.dom — DOMParser, Document/Element/Node APIs, DOM manipulation, TreeWalker and NodeIterator traversal with whatToShow filters, serialization, entity handling, auto-closing tags, constants, and TypeScript types
+description: How to parse HTML with neo.dom, inspect the HTML/head/body document structure, manipulate the supported DOM subset, traverse nodes, and serialize content safely
 version: "1.0.0"
 globs:
   - "**/*.ts"
@@ -9,240 +9,77 @@ globs:
   - "**/*.jsx"
 ---
 
-# Getting Started with @lpm.dev/neo.dom
+# Get started with @lpm.dev/neo.dom
 
-## Overview
-
-neo.dom is a lightweight (~20KB), zero-dependency, security-focused DOM parser for Node.js. It provides HTML parsing, DOM tree manipulation, and traversal APIs. Designed as the parsing layer for sanitization pipelines (works with `@lpm.dev/neo.sanitize`).
-
-## Parsing HTML
+## Parse HTML
 
 ```typescript
 import { DOMParser } from '@lpm.dev/neo.dom'
 
 const parser = new DOMParser()
-const doc = parser.parseFromString('<div><p>Hello</p></div>', 'text/html')
+const document = parser.parseFromString('<p>Hello</p>', 'text/html')
 
-// Access the parsed tree
-const body = doc.body
-console.log(body.firstChild.tagName)  // 'DIV'
-console.log(body.textContent)         // 'Hello'
+document.documentElement.nodeName // 'HTML'
+document.head.nodeName            // 'HEAD'
+document.body.innerHTML           // '<p>Hello</p>'
 ```
 
-Only `'text/html'` MIME type is supported. All parsed content goes under `document.body`.
+The production parser uses `parse5` for HTML5 tokenization and tree construction. Head content is placed in `document.head`; body content is placed in `document.body`; comments and doctypes can be direct document children.
 
-## Creating Nodes
+The default parser limits are 10 MiB of input, 100,000 nodes, 2,048 levels, and 1,024 attributes per element. Pass `maxInputLength`, `maxNodes`, `maxDepth`, or `maxAttributesPerElement` to the `DOMParser` constructor to use tighter application limits.
 
-```typescript
-const doc = parser.parseFromString('', 'text/html')
+## Security contract
 
-const div = doc.createElement('div')
-const text = doc.createTextNode('Hello world')
-const comment = doc.createComment('this is a comment')
-const fragment = doc.createDocumentFragment()
+neo.dom is not a sanitizer. It preserves scripts, event-handler attributes, dangerous URLs, CSS, and data URLs. Parsing does not execute scripts, but serialized untrusted output must pass through a dedicated allowlist sanitizer before browser insertion.
 
-div.appendChild(text)
-fragment.appendChild(div)
-doc.body.appendChild(fragment)
-```
-
-## Node Manipulation
-
-All Node types share these methods:
+## Create and manipulate nodes
 
 ```typescript
-// Append a child
-parent.appendChild(child)
+const div = document.createElement('div')
+const text = document.createTextNode('Hello')
+const comment = document.createComment('note')
 
-// Insert before a reference node
-parent.insertBefore(newChild, referenceChild)
-
-// Remove a child
-parent.removeChild(child)
-
-// Replace a child
-parent.replaceChild(newChild, oldChild)
-
-// Clone (shallow or deep)
-const shallow = node.cloneNode()       // Node only, no children
-const deep = node.cloneNode(true)      // Node + all descendants
-```
-
-### Node properties
-
-```typescript
-node.nodeType        // 1 (Element), 3 (Text), 8 (Comment), 9 (Document), 11 (Fragment)
-node.nodeName        // Tag name for elements, '#text' for text, '#comment' for comments
-node.nodeValue       // Text content for text/comment nodes, null for elements
-node.parentNode      // Parent node or null
-node.childNodes      // NodeList of children
-node.firstChild      // First child or null
-node.lastChild       // Last child or null
-node.nextSibling     // Next sibling or null
-node.previousSibling // Previous sibling or null
-node.textContent     // All descendant text concatenated
-```
-
-## Element API
-
-```typescript
-const div = doc.createElement('div')
-
-// Attributes
 div.setAttribute('class', 'container')
-div.getAttribute('class')        // 'container'
-div.hasAttribute('class')        // true
-div.removeAttribute('class')
+div.appendChild(text)
+div.insertBefore(comment, text)
+div.removeChild(comment)
 
-// Convenience methods
-div.remove()                     // Remove from parent
-div.replaceWith(otherElement)    // Replace in parent
-
-// innerHTML getter — serializes children to HTML string
-const html = div.innerHTML       // '<p>Hello</p>'
-
-// innerHTML setter — creates a TEXT NODE, does NOT parse HTML
-div.innerHTML = '<b>bold</b>'    // Creates text node with literal "<b>bold</b>"
+document.body.appendChild(div)
 ```
 
-**Important:** The `innerHTML` setter does not parse HTML. See Anti-patterns for workarounds.
+Supported node operations include `appendChild`, `removeChild`, `replaceChild`, `insertBefore`, `cloneNode`, and `textContent`. Supported attribute operations include `getAttribute`, `setAttribute`, `hasAttribute`, and `removeAttribute`.
 
-## Traversal
+Mutations reject cycles and invalid parent/child combinations. Inserting a `DocumentFragment` moves all of its children and leaves the fragment empty.
 
-### NodeIterator — flat linear scan
+The `innerHTML` getter serializes children. The setter creates a text node and does not parse markup.
+
+## Traverse nodes
 
 ```typescript
 import { NodeFilter } from '@lpm.dev/neo.dom'
 
-const iterator = doc.createNodeIterator(
-  doc.body,                  // Root node
-  NodeFilter.SHOW_ELEMENT,  // What to show (bitmask)
-  null                       // Optional custom filter
+const iterator = document.createNodeIterator(
+  document.body,
+  NodeFilter.SHOW_ELEMENT
 )
 
 let node
 while ((node = iterator.nextNode())) {
-  console.log(node.tagName)
+  console.log(node.nodeName)
 }
-
-// Go backward
-iterator.previousNode()
 ```
 
-### TreeWalker — directional navigation
+Use `TreeWalker` for directional navigation and subtree-pruning filters. Use `NodeIterator` for a linear document-order scan.
+`TreeWalker` promotes descendants of `FILTER_SKIP` nodes and prunes descendants of `FILTER_REJECT` nodes in both traversal directions.
 
-```typescript
-const walker = doc.createTreeWalker(
-  doc.body,
-  NodeFilter.SHOW_ELEMENT,
-  (node) => {
-    // Custom filter — skip script elements and their children
-    if (node.tagName === 'SCRIPT') return NodeFilter.FILTER_REJECT
-    return NodeFilter.FILTER_ACCEPT
-  }
-)
+## Known scope
 
-walker.firstChild()       // Navigate to first child element
-walker.nextSibling()      // Navigate to next sibling
-walker.parentNode()       // Navigate to parent
-walker.nextNode()         // Next in document order
-walker.previousNode()     // Previous in document order
-walker.currentNode        // Current position (readable and writable)
-```
+neo.dom does not provide selector queries, events, CSS layout, JavaScript execution, browser globals, or a complete W3C DOM. SVG and MathML elements retain their namespace URI and source casing.
 
-### whatToShow bitmask
-
-| Constant | Value | Matches |
-|----------|-------|---------|
-| `SHOW_ALL` | `0xFFFFFFFF` | All nodes |
-| `SHOW_ELEMENT` | `0x1` | Elements only |
-| `SHOW_TEXT` | `0x4` | Text nodes only |
-| `SHOW_COMMENT` | `0x80` | Comment nodes only |
-
-Combine with bitwise OR: `NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT`
-
-### Filter return values
-
-| Value | TreeWalker | NodeIterator |
-|-------|-----------|-------------|
-| `FILTER_ACCEPT` | Visit this node | Visit this node |
-| `FILTER_SKIP` | Skip node, enter children | Skip node, enter children |
-| `FILTER_REJECT` | Skip node **and entire subtree** | Same as SKIP |
-
-## Serialization
-
-```typescript
-import { serializeNode, serializeChildren, escapeHTML, escapeAttr } from '@lpm.dev/neo.dom'
-
-// Serialize a node and all descendants to HTML
-const html = serializeNode(element)
-// '<div class="container"><p>Hello</p></div>'
-
-// Serialize only children (no outer element)
-const inner = serializeChildren(element)
-// '<p>Hello</p>'
-
-// Escape text content
-escapeHTML('1 < 2 & 3 > 0')  // '1 &lt; 2 &amp; 3 &gt; 0'
-
-// Escape attribute values
-escapeAttr('say "hello"')     // 'say &quot;hello&quot;'
-```
-
-### Serialization normalizations
-
-- Void elements serialize as `<br />` (XHTML-style with space before slash)
-- Tag names are lowercased: `<DIV>` → `<div>`
-- Attributes are always double-quoted: `class=foo` → `class="foo"`
-- Text content is escaped: `&`, `<`, `>` → `&amp;`, `&lt;`, `&gt;`
-
-## Entity Handling
-
-The tokenizer decodes 5 named entities + all numeric entities:
-
-| Entity | Decoded |
-|--------|---------|
-| `&lt;` | `<` |
-| `&gt;` | `>` |
-| `&amp;` | `&` |
-| `&quot;` | `"` |
-| `&#39;` | `'` |
-| `&#NNN;` | Character by decimal code point |
-| `&#xHHH;` | Character by hex code point |
-
-Other named entities (`&nbsp;`, `&copy;`, `&mdash;`) are **not decoded** — use numeric form instead (`&#160;`, `&#169;`, `&#8212;`).
-
-## Auto-Closing Tags
-
-The parser automatically closes certain tags when encountering specific elements (matching browser behavior for common patterns):
-
-```html
-<!-- Input -->
-<p>First<p>Second
-
-<!-- Parsed as -->
-<p>First</p><p>Second</p>
-```
-
-Auto-close rules apply to: `<p>`, `<li>`, `<dt>`/`<dd>`, `<th>`/`<td>`, `<tr>`, `<thead>`/`<tbody>`/`<tfoot>`, `<option>`/`<optgroup>`.
-
-## Constants
-
-```typescript
-import { VOID_ELEMENTS, AUTO_CLOSE_TAGS, INLINE_ELEMENTS, BLOCK_ELEMENTS, NodeType } from '@lpm.dev/neo.dom'
-
-VOID_ELEMENTS    // Set: area, br, col, embed, hr, img, input, link, meta, source, track, wbr
-NodeType.ELEMENT_NODE          // 1
-NodeType.TEXT_NODE             // 3
-NodeType.COMMENT_NODE          // 8
-NodeType.DOCUMENT_NODE         // 9
-NodeType.DOCUMENT_FRAGMENT_NODE // 11
-```
-
-## Sub-Path Imports
+## Imports
 
 ```typescript
 import { DOMParser } from '@lpm.dev/neo.dom/parser'
-import { Element, Node, Document } from '@lpm.dev/neo.dom/dom'
+import { Document, Element, Node } from '@lpm.dev/neo.dom/dom'
 import { NodeIterator, TreeWalker, NodeFilter } from '@lpm.dev/neo.dom/traversal'
 ```

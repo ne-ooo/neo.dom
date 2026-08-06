@@ -1,7 +1,8 @@
 /**
- * mXSS (Mutation XSS) Resistance Tests
+ * Mutation-sensitive Parsing and Serialization Tests
  *
- * Tests that neo.dom doesn't introduce XSS vulnerabilities through:
+ * Tests parse/serialize stability around mutation-sensitive inputs.
+ * These tests do not assert that dangerous markup is sanitized.
  * - HTML entity mutations
  * - Backslash escaping tricks
  * - Namespace confusion
@@ -13,7 +14,7 @@ import { describe, it, expect } from 'vitest'
 import { DOMParser } from '../../src/parser/parser.js'
 import { serializeElement } from '../../src/utils/serializer.js'
 
-describe('mXSS Resistance', () => {
+describe('Mutation-sensitive round trips', () => {
   const parser = new DOMParser()
 
   describe('HTML Entity Mutation', () => {
@@ -235,7 +236,7 @@ describe('mXSS Resistance', () => {
       // <script /> should still be treated as script
       const html = '<script src="evil.js" />'
       const doc = parser.parseFromString(html, 'text/html')
-      const script = doc.body.firstChild! as any
+      const script = doc.head.firstChild! as any
 
       expect(script?.tagName?.toLowerCase()).toBe('script')
       expect(script?.getAttribute('src')).toBe('evil.js')
@@ -338,7 +339,7 @@ describe('mXSS Resistance', () => {
   })
 
   describe('Round-trip Security', () => {
-    it('should maintain safety through parse-serialize-parse cycle', () => {
+    it('should keep encoded text stable through parse-serialize-parse cycles', () => {
       const dangerous = '<div>&lt;script&gt;alert()&lt;/script&gt;</div>'
 
       // First parse
@@ -361,7 +362,7 @@ describe('mXSS Resistance', () => {
       expect(serialized2).toBe(serialized1)
     })
 
-    it('should maintain attribute safety through cycles', () => {
+    it('should preserve attribute values through cycles', () => {
       const dangerous = '<a href="javascript:alert()">link</a>'
 
       const doc1 = parser.parseFromString(dangerous, 'text/html')

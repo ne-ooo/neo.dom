@@ -2,7 +2,7 @@
  * @lpm.dev/neo.dom - TypeScript Type Definitions
  *
  * Minimal DOM API types for HTML parsing and traversal
- * NOT a full W3C DOM implementation - only what we need for sanitization
+ * NOT a full W3C DOM implementation - a focused parsing and traversal subset
  */
 
 /**
@@ -69,8 +69,14 @@ export interface Node {
  * Element interface (represents an HTML element)
  */
 export interface Element extends Node {
-  /** Tag name (uppercase) */
+  /** Uppercase for HTML elements; source casing for foreign-content elements */
   tagName: string
+
+  /** Element local name, preserving foreign-content casing */
+  readonly localName: string
+
+  /** Namespace URI assigned by the HTML parser */
+  readonly namespaceURI: string
 
   /** Attributes collection */
   attributes: NamedNodeMap
@@ -129,10 +135,13 @@ export interface Comment extends Node {
  * Document interface (root of the DOM tree)
  */
 export interface Document extends Node {
-  /** Document body element */
-  body: Element
+  /** Document head element */
+  readonly head: Element
 
-  /** Document type (always 'text/html' for us) */
+  /** Document body element */
+  readonly body: Element
+
+  /** Root HTML element */
   readonly documentElement: Element
 
   /**
@@ -172,6 +181,15 @@ export interface Document extends Node {
     whatToShow: number,
     filter?: NodeFilterCallback
   ): TreeWalker
+}
+
+/**
+ * Document type declaration.
+ */
+export interface DocumentType extends Node {
+  readonly name: string
+  readonly publicId: string
+  readonly systemId: string
 }
 
 /**
@@ -301,6 +319,21 @@ export interface DOMParser {
    * Parse HTML string to Document
    */
   parseFromString(html: string, mimeType: 'text/html'): Document
+}
+
+/** Resource limits applied by DOMParser to untrusted or accidental large input. */
+export interface DOMParserOptions {
+  /** Maximum input length in JavaScript UTF-16 code units. Default: 10 MiB. */
+  maxInputLength?: number
+
+  /** Maximum number of parsed DOM nodes, excluding the Document node. Default: 100,000. */
+  maxNodes?: number
+
+  /** Maximum parsed tree depth below the Document node. Default: 2,048. */
+  maxDepth?: number
+
+  /** Maximum number of attributes on one element. Default: 1,024. */
+  maxAttributesPerElement?: number
 }
 
 /**

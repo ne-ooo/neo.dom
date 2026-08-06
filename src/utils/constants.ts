@@ -13,8 +13,12 @@ export const NodeType = {
   TEXT_NODE: 3,
   COMMENT_NODE: 8,
   DOCUMENT_NODE: 9,
+  DOCUMENT_TYPE_NODE: 10,
   DOCUMENT_FRAGMENT_NODE: 11,
 } as const
+
+/** HTML namespace used by HTML5 parsers and DOM elements. */
+export const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml'
 
 /**
  * NodeFilter constants
@@ -84,7 +88,7 @@ export const AUTO_CLOSE_TAGS: Record<string, string[]> = {
 
 /**
  * Elements that cannot contain block-level elements
- * Used for forbidden nesting detection (mXSS prevention)
+ * Retained for compatibility with the legacy tree builder
  */
 export const INLINE_ELEMENTS = new Set([
   'a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn', 'em',

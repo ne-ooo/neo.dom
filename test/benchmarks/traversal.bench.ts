@@ -9,6 +9,8 @@ import { DOMParser } from '../../src/parser/parser.js'
 import { NodeIterator } from '../../src/traversal/iterator.js'
 import { NodeFilter } from '../../src/utils/constants.js'
 
+let benchmarkSink = 0
+
 describe('DOM Traversal Performance', () => {
   const parser = new DOMParser()
 
@@ -32,6 +34,7 @@ describe('DOM Traversal Performance', () => {
     while (iterator.nextNode()) {
       count++
     }
+    benchmarkSink ^= count
   })
 
   bench('Iterate elements only - medium tree (neo.dom)', () => {
@@ -40,6 +43,7 @@ describe('DOM Traversal Performance', () => {
     while (iterator.nextNode()) {
       count++
     }
+    benchmarkSink ^= count
   })
 
   // Large tree (100 elements)
@@ -53,6 +57,7 @@ describe('DOM Traversal Performance', () => {
     while (iterator.nextNode()) {
       count++
     }
+    benchmarkSink ^= count
   })
 
   // Deep tree (20 levels)
@@ -66,6 +71,7 @@ describe('DOM Traversal Performance', () => {
     while (iterator.nextNode()) {
       count++
     }
+    benchmarkSink ^= count
   })
 
   // With custom filter
@@ -78,16 +84,33 @@ describe('DOM Traversal Performance', () => {
     while (iterator.nextNode()) {
       count++
     }
+    benchmarkSink ^= count
   })
 
   // Bidirectional iteration
   bench('Bidirectional iteration (neo.dom)', () => {
     const iterator = new NodeIterator(mediumRoot, NodeFilter.SHOW_ELEMENT, null)
+    let count = 0
 
     // Go forward
-    while (iterator.nextNode()) {}
+    while (iterator.nextNode()) count++
 
     // Go backward
-    while (iterator.previousNode()) {}
+    while (iterator.previousNode()) count++
+    benchmarkSink ^= count
+  })
+
+  const wideHTML = '<div>' + '<span></span>'.repeat(20_000) + '</div>'
+  const wideDoc = parser.parseFromString(wideHTML, 'text/html')
+  const wideRoot = wideDoc.body.firstChild!
+
+  bench('Follow nextSibling links - 20,000 siblings (neo.dom)', () => {
+    let count = 0
+    let node = wideRoot.firstChild
+    while (node) {
+      count++
+      node = node.nextSibling
+    }
+    benchmarkSink ^= count
   })
 })

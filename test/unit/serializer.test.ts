@@ -54,13 +54,13 @@ describe('HTML Serializer', () => {
   describe('serializeNode - Comment nodes', () => {
     it('should serialize comment nodes', () => {
       const doc = parser.parseFromString('<!-- comment -->', 'text/html')
-      const comment = doc.body.firstChild!
+      const comment = doc.firstChild!
       expect(serializeNode(comment)).toBe('<!-- comment -->')
     })
 
     it('should serialize empty comments', () => {
       const doc = parser.parseFromString('<!---->', 'text/html')
-      const comment = doc.body.firstChild!
+      const comment = doc.firstChild!
       expect(serializeNode(comment)).toBe('<!---->')
     })
   })

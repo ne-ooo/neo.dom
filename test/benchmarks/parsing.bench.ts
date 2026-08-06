@@ -7,6 +7,8 @@
 import { bench, describe } from 'vitest'
 import { DOMParser } from '../../src/parser/parser.js'
 
+let benchmarkSink = 0
+
 describe('HTML Parsing Performance', () => {
   const parser = new DOMParser()
 
@@ -15,7 +17,7 @@ describe('HTML Parsing Performance', () => {
 
   bench('Simple HTML (neo.dom)', () => {
     const doc = parser.parseFromString(simpleHTML, 'text/html')
-    doc.body.firstChild
+    benchmarkSink ^= doc.body.childNodes.length
   })
 
   // Complex HTML with attributes
@@ -47,7 +49,7 @@ describe('HTML Parsing Performance', () => {
 
   bench('Complex HTML (neo.dom)', () => {
     const doc = parser.parseFromString(complexHTML, 'text/html')
-    doc.body.firstChild
+    benchmarkSink ^= doc.body.childNodes.length
   })
 
   // HTML with entities
@@ -55,7 +57,7 @@ describe('HTML Parsing Performance', () => {
 
   bench('HTML with entities (neo.dom)', () => {
     const doc = parser.parseFromString(entitiesHTML, 'text/html')
-    doc.body.firstChild
+    benchmarkSink ^= doc.body.childNodes.length
   })
 
   // Large HTML (100 paragraphs)
@@ -63,7 +65,7 @@ describe('HTML Parsing Performance', () => {
 
   bench('Large HTML - 100 elements (neo.dom)', () => {
     const doc = parser.parseFromString(largeHTML, 'text/html')
-    doc.body.firstChild
+    benchmarkSink ^= doc.body.childNodes.length
   })
 
   // Deeply nested HTML
@@ -71,7 +73,7 @@ describe('HTML Parsing Performance', () => {
 
   bench('Deeply nested HTML - 20 levels (neo.dom)', () => {
     const doc = parser.parseFromString(deepHTML, 'text/html')
-    doc.body.firstChild
+    benchmarkSink ^= doc.body.childNodes.length
   })
 
   // HTML with many attributes
@@ -79,6 +81,6 @@ describe('HTML Parsing Performance', () => {
 
   bench('Many attributes - 20 attrs (neo.dom)', () => {
     const doc = parser.parseFromString(manyAttrsHTML, 'text/html')
-    doc.body.firstChild
+    benchmarkSink ^= doc.body.childNodes.length
   })
 })

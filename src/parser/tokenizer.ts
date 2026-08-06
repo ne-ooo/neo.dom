@@ -1,8 +1,8 @@
 /**
  * @lpm.dev/neo.dom - HTML Tokenizer
  *
- * Simplified HTML tokenization (not full HTML5 spec)
- * Focused on security-critical parsing for sanitization use cases
+ * Legacy simplified tokenizer retained for direct compatibility and tests.
+ * DOMParser uses parse5 and does not use this tokenizer in production.
  */
 
 import type { Token, TokenType } from '../types.js'

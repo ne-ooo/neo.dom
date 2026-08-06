@@ -6,7 +6,8 @@
 
 import type { Element as IElement, Attr, NamedNodeMap } from '../types.js'
 import { Node } from './node.js'
-import { NodeType } from '../utils/constants.js'
+import { Text } from './document.js'
+import { HTML_NAMESPACE, NodeType } from '../utils/constants.js'
 import { serializeChildren } from '../utils/serializer.js'
 
 /**
@@ -27,9 +28,11 @@ class AttrImpl implements Attr {
  */
 class NamedNodeMapImpl implements NamedNodeMap {
   private attrs: Map<string, Attr>
+  private readonly caseInsensitive: boolean
 
-  constructor() {
+  constructor(caseInsensitive: boolean) {
     this.attrs = new Map()
+    this.caseInsensitive = caseInsensitive
   }
 
   get length(): number {
@@ -42,18 +45,21 @@ class NamedNodeMapImpl implements NamedNodeMap {
   }
 
   getNamedItem(name: string): Attr | null {
-    return this.attrs.get(name) ?? null
+    return this.attrs.get(this.normalizeName(name)) ?? null
   }
 
   setNamedItem(attr: Attr): Attr | null {
-    const oldAttr = this.attrs.get(attr.name) ?? null
-    this.attrs.set(attr.name, attr)
+    const name = this.normalizeName(attr.name)
+    const oldAttr = this.attrs.get(name) ?? null
+    const storedAttr = name === attr.name ? attr : new AttrImpl(name, attr.value)
+    this.attrs.set(name, storedAttr)
     return oldAttr
   }
 
   removeNamedItem(name: string): Attr | null {
-    const attr = this.attrs.get(name) ?? null
-    this.attrs.delete(name)
+    const normalizedName = this.normalizeName(name)
+    const attr = this.attrs.get(normalizedName) ?? null
+    this.attrs.delete(normalizedName)
     return attr
   }
 
@@ -63,6 +69,10 @@ class NamedNodeMapImpl implements NamedNodeMap {
   *[Symbol.iterator]() {
     yield* this.attrs.values()
   }
+
+  private normalizeName(name: string): string {
+    return this.caseInsensitive ? name.toLowerCase() : name
+  }
 }
 
 /**
@@ -70,12 +80,20 @@ class NamedNodeMapImpl implements NamedNodeMap {
  */
 export class Element extends Node implements IElement {
   tagName: string
+  readonly localName: string
+  readonly namespaceURI: string
   attributes: NamedNodeMap
 
-  constructor(tagName: string) {
-    super(NodeType.ELEMENT_NODE, tagName.toUpperCase(), null)
-    this.tagName = tagName.toUpperCase()
-    this.attributes = new NamedNodeMapImpl()
+  constructor(tagName: string, namespaceURI: string = HTML_NAMESPACE) {
+    const normalizedTagName = namespaceURI === HTML_NAMESPACE
+      ? tagName.toUpperCase()
+      : tagName
+
+    super(NodeType.ELEMENT_NODE, normalizedTagName, null)
+    this.tagName = normalizedTagName
+    this.localName = namespaceURI === HTML_NAMESPACE ? tagName.toLowerCase() : tagName
+    this.namespaceURI = namespaceURI
+    this.attributes = new NamedNodeMapImpl(namespaceURI === HTML_NAMESPACE)
   }
 
   get innerHTML(): string {
@@ -84,17 +102,8 @@ export class Element extends Node implements IElement {
   }
 
   set innerHTML(html: string) {
-    // Clear children
-    while (this.firstChild) {
-      this.removeChild(this.firstChild)
-    }
-
-    // Parse and append new children (implemented later)
-    // For now, just create a text node
-    if (html) {
-      const textNode = new Node(NodeType.TEXT_NODE, '#text', html)
-      this.appendChild(textNode)
-    }
+    // This focused DOM does not implement fragment parsing for assignment.
+    this.textContent = html
   }
 
   getAttribute(name: string): string | null {
@@ -131,7 +140,7 @@ export class Element extends Node implements IElement {
     // Convert strings to text nodes
     const nodeList = nodes.map(node => {
       if (typeof node === 'string') {
-        return new Node(NodeType.TEXT_NODE, '#text', node)
+        return new Text(node)
       }
       return node
     })
@@ -143,5 +152,18 @@ export class Element extends Node implements IElement {
 
     // Remove this element
     parent.removeChild(this)
+  }
+
+  protected override cloneShallow(): Element {
+    const clone = new Element(this.localName, this.namespaceURI)
+    for (let index = 0; index < this.attributes.length; index++) {
+      const attribute = this.attributes.item(index)
+      if (attribute) clone.setAttribute(attribute.name, attribute.value)
+    }
+    return clone
+  }
+
+  protected override createTextContentNode(value: string): Text {
+    return new Text(value)
   }
 }
