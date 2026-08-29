@@ -38,18 +38,22 @@ export const NodeFilter = {
 } as const
 
 /**
- * Void elements (self-closing, no end tag)
+ * Current and obsolete HTML void elements (self-closing, no end tag)
  * @see https://html.spec.whatwg.org/multipage/syntax.html#void-elements
  */
 export const VOID_ELEMENTS = new Set([
   'area',
   'base',
+  'basefont',
+  'bgsound',
   'br',
   'col',
   'embed',
+  'frame',
   'hr',
   'img',
   'input',
+  'keygen',
   'link',
   'meta',
   'param',

@@ -31,15 +31,16 @@
   },
   "files": [
     "dist",
-    ".lpm",
+    ".lpm/skills",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/verify-build.mjs",
     "test": "vitest run",
+    "test:artifacts": "node scripts/verify-build.mjs",
     "coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "bench": "vitest bench",

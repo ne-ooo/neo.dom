@@ -43,6 +43,42 @@ describe('TreeWalker conformance', () => {
     expect((walker.previousNode() as Element).localName).toBe('em')
   })
 
+  it('finds the previous accepted node without scanning the preceding subtree', () => {
+    const root = new Element('div')
+    const preceding = new Element('section')
+    const current = new Element('p')
+    for (let index = 0; index < 50_000; index++) {
+      preceding.appendChild(new Element('i'))
+    }
+    root.appendChild(preceding)
+    root.appendChild(current)
+
+    const filter = vi.fn(() => NodeFilter.FILTER_ACCEPT)
+    const walker = new TreeWalker(root, NodeFilter.SHOW_ELEMENT, filter)
+    walker.currentNode = current
+
+    expect(walker.previousNode()).toBe(preceding.lastChild)
+    expect(filter).toHaveBeenCalledTimes(2)
+  })
+
+  it('walks backward through rejected and skipped rightmost branches', () => {
+    const document = parser.parseFromString(
+      '<div><section><a></a><aside data-reject><b></b></aside><nav data-skip><em></em></nav></section><p></p></div>',
+      'text/html'
+    )
+    const root = document.body.firstChild!
+    const walker = new TreeWalker(root, NodeFilter.SHOW_ELEMENT, node => {
+      const element = node as Element
+      if (element.hasAttribute?.('data-reject')) return NodeFilter.FILTER_REJECT
+      if (element.hasAttribute?.('data-skip')) return NodeFilter.FILTER_SKIP
+      return NodeFilter.FILTER_ACCEPT
+    })
+    walker.currentNode = root.lastChild!
+
+    expect((walker.previousNode() as Element).localName).toBe('em')
+    expect((walker.previousNode() as Element).localName).toBe('a')
+  })
+
   it('promotes FILTER_SKIP descendants and prunes FILTER_REJECT subtrees', () => {
     const document = parser.parseFromString(
       '<div><section data-filter="skip"><a></a><b></b></section>' +

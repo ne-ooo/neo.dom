@@ -5,6 +5,7 @@
  */
 
 import type { Node as INode, NodeList } from '../types.js'
+import { notifyNodeIteratorsBeforeRemoval } from '../traversal/iterator-registry.js'
 import { NodeType } from '../utils/constants.js'
 
 /** A live, array-like view over a node's child array. */
@@ -34,6 +35,12 @@ function createLiveNodeList(nodes: INode[]): NodeList {
       }
       return Reflect.get(target, property, receiver)
     },
+    set(target, property, value, receiver) {
+      if (typeof property === 'string' && /^(0|[1-9]\d*)$/.test(property)) {
+        return false
+      }
+      return Reflect.set(target, property, value, receiver)
+    },
   })
 }
 
@@ -41,20 +48,31 @@ function createLiveNodeList(nodes: INode[]): NodeList {
  * Node base class
  */
 export class Node implements INode {
-  nodeType: number
-  nodeName: string
+  private readonly _nodeType: number
+  private readonly _nodeName: string
   private _nodeValue: string | null
-  parentNode: INode | null = null
-  private readonly _childNodes: INode[] = []
-  private readonly _childNodesList: NodeList
-  private _nextSibling: INode | null = null
-  private _previousSibling: INode | null = null
+  private _parentNode: Node | null = null
+  private readonly _childNodes: Node[] = []
+  private _childNodesList: NodeList | null = null
+  private _nextSibling: Node | null = null
+  private _previousSibling: Node | null = null
 
   constructor(nodeType: number, nodeName: string, nodeValue: string | null = null) {
-    this.nodeType = nodeType
-    this.nodeName = nodeName
+    this._nodeType = nodeType
+    this._nodeName = nodeName
     this._nodeValue = nodeValue
-    this._childNodesList = createLiveNodeList(this._childNodes)
+  }
+
+  get nodeType(): number {
+    return this._nodeType
+  }
+
+  get nodeName(): string {
+    return this._nodeName
+  }
+
+  get parentNode(): Node | null {
+    return this._parentNode
   }
 
   get nodeValue(): string | null {
@@ -62,37 +80,42 @@ export class Node implements INode {
   }
 
   set nodeValue(value: string | null) {
-    this._nodeValue = value
+    if (this._nodeType === NodeType.TEXT_NODE || this._nodeType === NodeType.COMMENT_NODE) {
+      this._nodeValue = value
+    }
   }
 
   get childNodes(): NodeList {
+    if (!this._childNodesList) {
+      this._childNodesList = createLiveNodeList(this._childNodes)
+    }
     return this._childNodesList
   }
 
-  get firstChild(): INode | null {
+  get firstChild(): Node | null {
     return this._childNodes[0] ?? null
   }
 
-  get lastChild(): INode | null {
+  get lastChild(): Node | null {
     return this._childNodes[this._childNodes.length - 1] ?? null
   }
 
-  get nextSibling(): INode | null {
-    return this.parentNode ? this._nextSibling : null
+  get nextSibling(): Node | null {
+    return this._parentNode ? this._nextSibling : null
   }
 
-  get previousSibling(): INode | null {
-    return this.parentNode ? this._previousSibling : null
+  get previousSibling(): Node | null {
+    return this._parentNode ? this._previousSibling : null
   }
 
   get textContent(): string | null {
-    if (this.nodeType === NodeType.TEXT_NODE || this.nodeType === NodeType.COMMENT_NODE) {
+    if (this._nodeType === NodeType.TEXT_NODE || this._nodeType === NodeType.COMMENT_NODE) {
       return this.nodeValue
     }
 
     if (
-      this.nodeType !== NodeType.ELEMENT_NODE &&
-      this.nodeType !== NodeType.DOCUMENT_FRAGMENT_NODE
+      this._nodeType !== NodeType.ELEMENT_NODE &&
+      this._nodeType !== NodeType.DOCUMENT_FRAGMENT_NODE
     ) {
       return null
     }
@@ -104,14 +127,14 @@ export class Node implements INode {
       const current = stack.pop()
       if (!current) continue
 
-      if (current.nodeType === NodeType.TEXT_NODE) {
+      if (Node.getNodeType(current) === NodeType.TEXT_NODE) {
         chunks.push(current.nodeValue ?? '')
         continue
       }
 
-      const children = current.childNodes
-      for (let index = children.length - 1; index >= 0; index--) {
-        const child = children.item(index)
+      const childCount = Node.getChildCount(current)
+      for (let index = childCount - 1; index >= 0; index--) {
+        const child = Node.getChildAt(current, index)
         if (child) stack.push(child)
       }
     }
@@ -120,23 +143,19 @@ export class Node implements INode {
   }
 
   set textContent(value: string | null) {
-    if (this.nodeType === NodeType.TEXT_NODE || this.nodeType === NodeType.COMMENT_NODE) {
+    if (this._nodeType === NodeType.TEXT_NODE || this._nodeType === NodeType.COMMENT_NODE) {
       this.nodeValue = value
       return
     }
 
     if (
-      this.nodeType !== NodeType.ELEMENT_NODE &&
-      this.nodeType !== NodeType.DOCUMENT_FRAGMENT_NODE
+      this._nodeType !== NodeType.ELEMENT_NODE &&
+      this._nodeType !== NodeType.DOCUMENT_FRAGMENT_NODE
     ) {
       return
     }
 
-    for (const child of this._childNodes) {
-      child.parentNode = null
-      Node.clearSiblingLinks(child)
-    }
-    this._childNodes.splice(0, this._childNodes.length)
+    this.detachNodesForMutation(this._childNodes.slice())
 
     if (value !== null && value !== '') {
       this.appendChild(this.createTextContentNode(value))
@@ -144,27 +163,25 @@ export class Node implements INode {
   }
 
   appendChild(node: INode): INode {
+    assertCanonicalNode(node, 'node')
     this.preInsert(node, null, null)
     return node
   }
 
   removeChild(node: INode): INode {
+    assertCanonicalNode(node, 'node')
     const index = this._childNodes.indexOf(node)
     if (index === -1) {
       throw new Error('Node not found')
     }
 
-    const previous = this._childNodes[index - 1] ?? null
-    const next = this._childNodes[index + 1] ?? null
-    this._childNodes.splice(index, 1)
-    Node.setNextSibling(previous, next)
-    Node.setPreviousSibling(next, previous)
-    node.parentNode = null
-    Node.clearSiblingLinks(node)
+    this.detachNodesForMutation([node])
     return node
   }
 
   replaceChild(newNode: INode, oldNode: INode): INode {
+    assertCanonicalNode(newNode, 'newNode')
+    assertCanonicalNode(oldNode, 'oldNode')
     if (this._childNodes.indexOf(oldNode) === -1) {
       throw new Error('Node not found')
     }
@@ -177,6 +194,8 @@ export class Node implements INode {
   }
 
   insertBefore(newNode: INode, refNode: INode | null): INode {
+    assertCanonicalNode(newNode, 'newNode')
+    if (refNode) assertCanonicalNode(refNode, 'refNode')
     if (refNode !== null && this._childNodes.indexOf(refNode) === -1) {
       throw new Error('Reference node not found')
     }
@@ -192,26 +211,28 @@ export class Node implements INode {
     const rootClone = this.cloneShallow()
     if (!deep) return rootClone
 
-    const stack: Array<{ source: INode; target: Node }> = [
-      { source: this, target: rootClone },
+    const stack: Array<{ source: Node; target: Node; childIndex: number }> = [
+      { source: this, target: rootClone, childIndex: 0 },
     ]
 
     while (stack.length > 0) {
-      const frame = stack.pop()
+      const frame = stack[stack.length - 1]
       if (!frame) continue
 
-      const childFrames: Array<{ source: INode; target: Node }> = []
-      for (let index = 0; index < frame.source.childNodes.length; index++) {
-        const sourceChild = frame.source.childNodes.item(index)
-        if (!sourceChild) continue
-        const childClone = (sourceChild as Node).cloneShallow()
-        frame.target.appendChild(childClone)
-        childFrames.push({ source: sourceChild, target: childClone })
+      if (frame.childIndex >= frame.source._childNodes.length) {
+        stack.pop()
+        continue
       }
 
-      for (let index = childFrames.length - 1; index >= 0; index--) {
-        const childFrame = childFrames[index]
-        if (childFrame) stack.push(childFrame)
+      const sourceChild = frame.source._childNodes[frame.childIndex]
+      frame.childIndex++
+      if (!sourceChild) continue
+
+      const concreteChild = sourceChild as Node
+      const childClone = concreteChild.cloneShallow()
+      frame.target.appendChild(childClone)
+      if (concreteChild._childNodes.length > 0) {
+        stack.push({ source: concreteChild, target: childClone, childIndex: 0 })
       }
     }
 
@@ -219,7 +240,7 @@ export class Node implements INode {
   }
 
   protected cloneShallow(): Node {
-    return new Node(this.nodeType, this.nodeName, this.nodeValue)
+    return new Node(this._nodeType, this._nodeName, this._nodeValue)
   }
 
   protected createTextContentNode(value: string): Node {
@@ -227,13 +248,13 @@ export class Node implements INode {
   }
 
   /** Validate an insertion completely before changing any participating tree. */
-  private preInsert(newNode: INode, referenceNode: INode | null, replacedNode: INode | null): void {
+  private preInsert(newNode: Node, referenceNode: Node | null, replacedNode: Node | null): void {
     if (newNode === this) {
       throw hierarchyError('A node cannot be inserted into itself')
     }
 
-    const candidates = newNode.nodeType === NodeType.DOCUMENT_FRAGMENT_NODE
-      ? Array.from(newNode.childNodes)
+    const candidates = newNode._nodeType === NodeType.DOCUMENT_FRAGMENT_NODE
+      ? newNode._childNodes.slice()
       : [newNode]
 
     for (const candidate of candidates) {
@@ -245,21 +266,21 @@ export class Node implements INode {
     if (
       referenceNode === null &&
       replacedNode === null &&
-      newNode.nodeType !== NodeType.DOCUMENT_FRAGMENT_NODE &&
-      newNode.parentNode !== this &&
-      this.nodeType !== NodeType.DOCUMENT_NODE
+      newNode._nodeType !== NodeType.DOCUMENT_FRAGMENT_NODE &&
+      newNode._parentNode !== this &&
+      this._nodeType !== NodeType.DOCUMENT_NODE
     ) {
-      if (newNode.parentNode) newNode.parentNode.removeChild(newNode)
+      Node.detachNodesForMutation([newNode])
       const previous = this._childNodes[this._childNodes.length - 1] ?? null
       this._childNodes.push(newNode)
-      newNode.parentNode = this
+      Node.setParentNode(newNode, this)
       Node.setPreviousSibling(newNode, previous)
       Node.setNextSibling(newNode, null)
       Node.setNextSibling(previous, newNode)
       return
     }
 
-    const removed = new Set<INode>(candidates)
+    const removed = new Set<Node>(candidates)
     if (replacedNode) removed.add(replacedNode)
 
     const anchorIndex = replacedNode
@@ -274,37 +295,45 @@ export class Node implements INode {
       if (child && !removed.has(child)) insertionIndex++
     }
 
-    const finalChildren = this._childNodes.filter(child => !removed.has(child))
-    finalChildren.splice(insertionIndex, 0, ...candidates)
+    const remainingChildren = this._childNodes.filter(child => !removed.has(child))
+    const finalChildren: Node[] = []
+    for (let index = 0; index < insertionIndex; index++) {
+      const child = remainingChildren[index]
+      if (child) finalChildren.push(child)
+    }
+    for (const candidate of candidates) finalChildren.push(candidate)
+    for (let index = insertionIndex; index < remainingChildren.length; index++) {
+      const child = remainingChildren[index]
+      if (child) finalChildren.push(child)
+    }
     this.validateFinalChildren(finalChildren)
 
-    for (const candidate of candidates) {
-      if (candidate.parentNode && candidate.parentNode !== this) {
-        candidate.parentNode.removeChild(candidate)
-      }
-    }
+    const detachOrder = replacedNode && !candidates.includes(replacedNode)
+      ? [...candidates, replacedNode]
+      : candidates
+    Node.detachNodesForMutation(detachOrder)
 
-    const retained = new Set(finalChildren)
-    for (const child of this._childNodes) {
-      if (!retained.has(child)) {
-        child.parentNode = null
-        Node.clearSiblingLinks(child)
-      }
-    }
-
-    this._childNodes.splice(0, this._childNodes.length, ...finalChildren)
+    this._childNodes.splice(0, this._childNodes.length)
+    for (const child of finalChildren) this._childNodes.push(child)
     for (const child of finalChildren) {
-      child.parentNode = this
+      Node.setParentNode(child, this)
     }
     this.relinkChildren()
   }
 
-  private validateCandidate(candidate: INode): void {
+  private validateCandidate(candidate: Node): void {
+    // A fragment is flattened before insertion, so the target itself can be a
+    // candidate even when the fragment wrapper is a different node. Reject it
+    // before the leaf fast path below skips the ancestor walk.
+    if (candidate === this) {
+      throw hierarchyError('A node cannot be inserted into itself')
+    }
+
     // A leaf cannot already contain this parent, so the common parse/clone path
     // avoids walking the complete ancestor chain for every appended leaf.
-    if (candidate.childNodes.length > 0) {
-      const visited = new Set<INode>()
-      let ancestor: INode | null = this
+    if (Node.getChildCount(candidate) > 0) {
+      const visited = new Set<Node>()
+      let ancestor: Node | null = this
       while (ancestor) {
         if (ancestor === candidate) {
           throw hierarchyError('The insertion would create a cycle')
@@ -313,27 +342,28 @@ export class Node implements INode {
           throw hierarchyError('The existing parent chain contains a cycle')
         }
         visited.add(ancestor)
-        ancestor = ancestor.parentNode
+        ancestor = ancestor._parentNode
       }
     }
 
-    const allowed = this.nodeType === NodeType.DOCUMENT_NODE
-      ? candidate.nodeType === NodeType.ELEMENT_NODE ||
-        candidate.nodeType === NodeType.COMMENT_NODE ||
-        candidate.nodeType === NodeType.DOCUMENT_TYPE_NODE
-      : this.nodeType === NodeType.ELEMENT_NODE || this.nodeType === NodeType.DOCUMENT_FRAGMENT_NODE
-        ? candidate.nodeType === NodeType.ELEMENT_NODE ||
-          candidate.nodeType === NodeType.TEXT_NODE ||
-          candidate.nodeType === NodeType.COMMENT_NODE
+    const allowed = this._nodeType === NodeType.DOCUMENT_NODE
+      ? candidate._nodeType === NodeType.ELEMENT_NODE ||
+        candidate._nodeType === NodeType.COMMENT_NODE ||
+        candidate._nodeType === NodeType.DOCUMENT_TYPE_NODE
+      : this._nodeType === NodeType.ELEMENT_NODE ||
+          this._nodeType === NodeType.DOCUMENT_FRAGMENT_NODE
+        ? candidate._nodeType === NodeType.ELEMENT_NODE ||
+          candidate._nodeType === NodeType.TEXT_NODE ||
+          candidate._nodeType === NodeType.COMMENT_NODE
         : false
 
     if (!allowed) {
-      throw hierarchyError(`${this.nodeName} cannot contain ${candidate.nodeName}`)
+      throw hierarchyError(`${this._nodeName} cannot contain ${candidate._nodeName}`)
     }
   }
 
-  private validateFinalChildren(children: INode[]): void {
-    if (this.nodeType !== NodeType.DOCUMENT_NODE) return
+  private validateFinalChildren(children: Node[]): void {
+    if (this._nodeType !== NodeType.DOCUMENT_NODE) return
 
     let elementIndex = -1
     let doctypeIndex = -1
@@ -342,12 +372,12 @@ export class Node implements INode {
       const child = children[index]
       if (!child) continue
 
-      if (child.nodeType === NodeType.ELEMENT_NODE) {
+      if (child._nodeType === NodeType.ELEMENT_NODE) {
         if (elementIndex !== -1) {
           throw hierarchyError('A document can contain only one document element')
         }
         elementIndex = index
-      } else if (child.nodeType === NodeType.DOCUMENT_TYPE_NODE) {
+      } else if (child._nodeType === NodeType.DOCUMENT_TYPE_NODE) {
         if (doctypeIndex !== -1) {
           throw hierarchyError('A document can contain only one doctype')
         }
@@ -369,20 +399,92 @@ export class Node implements INode {
     }
   }
 
-  private static clearSiblingLinks(node: INode): void {
+  /** Detach many nodes with one compaction pass per parent. */
+  protected detachNodesForMutation(nodes: readonly INode[]): void {
+    Node.detachNodesForMutation(nodes)
+  }
+
+  private static detachNodesForMutation(nodes: readonly INode[]): void {
+    const canonicalNodes: Node[] = []
+    for (const node of nodes) {
+      assertCanonicalNode(node, 'node')
+      canonicalNodes.push(node)
+    }
+
+    const removedByParent = new Map<Node, Set<Node>>()
+    for (const node of canonicalNodes) {
+      const parent = node._parentNode
+      if (!parent) continue
+      assertCanonicalNode(parent, 'parentNode')
+
+      notifyNodeIteratorsBeforeRemoval(node, parent)
+
+      const previous = node._previousSibling
+      const next = node._nextSibling
+      Node.setNextSibling(previous, next)
+      Node.setPreviousSibling(next, previous)
+      node._parentNode = null
+      node._previousSibling = null
+      node._nextSibling = null
+
+      let removed = removedByParent.get(parent)
+      if (!removed) {
+        removed = new Set()
+        removedByParent.set(parent, removed)
+      }
+      removed.add(node)
+    }
+
+    for (const [parent, removed] of removedByParent) {
+      let writeIndex = 0
+      for (const child of parent._childNodes) {
+        if (!removed.has(child)) {
+          parent._childNodes[writeIndex] = child
+          writeIndex++
+        }
+      }
+      parent._childNodes.length = writeIndex
+    }
+  }
+
+  private static clearSiblingLinks(node: Node): void {
     Node.setPreviousSibling(node, null)
     Node.setNextSibling(node, null)
   }
 
-  private static setNextSibling(node: INode | null, sibling: INode | null): void {
-    if (node instanceof Node) node._nextSibling = sibling
+  private static setNextSibling(node: Node | null, sibling: Node | null): void {
+    if (node) node._nextSibling = sibling
   }
 
-  private static setPreviousSibling(node: INode | null, sibling: INode | null): void {
-    if (node instanceof Node) node._previousSibling = sibling
+  private static setPreviousSibling(node: Node | null, sibling: Node | null): void {
+    if (node) node._previousSibling = sibling
+  }
+
+  private static setParentNode(node: Node, parent: Node | null): void {
+    node._parentNode = parent
+  }
+
+  private static getNodeType(node: INode): number {
+    return node instanceof Node ? node._nodeType : node.nodeType
+  }
+
+  private static getChildCount(node: INode): number {
+    return node instanceof Node ? node._childNodes.length : node.childNodes.length
+  }
+
+  private static getChildAt(node: INode, index: number): Node | null {
+    assertCanonicalNode(node, 'node')
+    return node._childNodes[index] ?? null
   }
 }
 
 function hierarchyError(message: string): Error {
   return new Error(`HierarchyRequestError: ${message}`)
+}
+
+/** Reject structural lookalikes and nodes from a different package runtime. */
+export function assertCanonicalNode(value: unknown, name: string): asserts value is Node {
+  if (!(value instanceof Node)) {
+    throw new TypeError(`${name} must be a canonical neo.dom Node from this module instance`)
+  }
 }
