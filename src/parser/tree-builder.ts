@@ -160,6 +160,6 @@ export class TreeBuilder {
     }
 
     // Default to body (Element extends Node)
-    return this.document.body as unknown as Node
+    return this.document.body! as unknown as Node
   }
 }

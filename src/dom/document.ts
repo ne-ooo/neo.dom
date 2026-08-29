@@ -17,7 +17,7 @@ import type {
 } from '../types.js'
 import { Node } from './node.js'
 import { Element } from './element.js'
-import { NodeType } from '../utils/constants.js'
+import { HTML_NAMESPACE, NodeType } from '../utils/constants.js'
 import { NodeIterator } from '../traversal/iterator.js'
 import { TreeWalker } from '../traversal/tree-walker.js'
 
@@ -132,31 +132,30 @@ export class DocumentType extends Node implements IDocumentType {
  * Document class
  */
 export class Document extends Node implements IDocument {
-  private _documentElement: Element
-  private _head: Element
-  private _body: Element
-
   constructor() {
     super(NodeType.DOCUMENT_NODE, '#document', null)
 
-    this._documentElement = new Element('html')
-    this._head = new Element('head')
-    this._body = new Element('body')
-    this.appendChild(this._documentElement)
-    this._documentElement.appendChild(this._head)
-    this._documentElement.appendChild(this._body)
+    const documentElement = new Element('html')
+    const head = new Element('head')
+    const body = new Element('body')
+    this.appendChild(documentElement)
+    documentElement.appendChild(head)
+    documentElement.appendChild(body)
   }
 
-  get head(): IElement {
-    return this._head
+  get head(): IElement | null {
+    return this.findDocumentElementChild('head')
   }
 
-  get body(): IElement {
-    return this._body
+  get body(): IElement | null {
+    return this.findDocumentElementChild('body', 'frameset')
   }
 
-  get documentElement(): IElement {
-    return this._documentElement
+  get documentElement(): IElement | null {
+    for (let child = this.firstChild; child; child = child.nextSibling) {
+      if (child.nodeType === NodeType.ELEMENT_NODE) return child as unknown as IElement
+    }
+    return null
   }
 
   override cloneNode(_deep: boolean = false): never {
@@ -193,5 +192,25 @@ export class Document extends Node implements IDocument {
     filter?: NodeFilterCallback
   ): ITreeWalker {
     return new TreeWalker(root, whatToShow, filter ?? null)
+  }
+
+  private findDocumentElementChild(
+    localName: 'head' | 'body',
+    alternateName?: 'frameset'
+  ): IElement | null {
+    const documentElement = this.documentElement
+    if (!documentElement) return null
+
+    for (let child = documentElement.firstChild; child; child = child.nextSibling) {
+      if (
+        child.nodeType === NodeType.ELEMENT_NODE &&
+        (child as IElement).namespaceURI === HTML_NAMESPACE &&
+        ((child as IElement).localName === localName ||
+          (child as IElement).localName === alternateName)
+      ) {
+        return child as IElement
+      }
+    }
+    return null
   }
 }

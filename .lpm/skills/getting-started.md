@@ -19,14 +19,18 @@ import { DOMParser } from '@lpm.dev/neo.dom'
 const parser = new DOMParser()
 const document = parser.parseFromString('<p>Hello</p>', 'text/html')
 
-document.documentElement.nodeName // 'HTML'
-document.head.nodeName            // 'HEAD'
-document.body.innerHTML           // '<p>Hello</p>'
+document.documentElement?.nodeName // 'HTML'
+document.head?.nodeName            // 'HEAD'
+document.body?.innerHTML           // '<p>Hello</p>'
 ```
 
-The production parser uses `parse5` for HTML5 tokenization and tree construction. Head content is placed in `document.head`; body content is placed in `document.body`; comments and doctypes can be direct document children.
+The production parser uses `parse5` for HTML5 tokenization and tree construction. It places head content in `document.head`. It places body content in `document.body`. Comments and doctypes can be direct document children.
 
-The default parser limits are 10 MiB of input, 100,000 nodes, 2,048 levels, and 1,024 attributes per element. Pass `maxInputLength`, `maxNodes`, `maxDepth`, or `maxAttributesPerElement` to the `DOMParser` constructor to use tighter application limits.
+The parser uses six finite limits. `maxInputLength` limits input size. `maxMarkupStarts` limits less-than (`<`) characters. `maxNodes` limits parsed nodes. `maxOpenElements` limits the transient parser stack. `maxDepth` limits final tree depth. `maxAttributesPerElement` limits attributes on one element.
+
+The defaults are 10 MiB, 250,000 markup starts, 100,000 nodes, 512 open elements, 2,048 final levels, and 1,024 attributes.
+
+The `documentElement`, `head`, and `body` getters track tree mutations. A getter returns `null` when its element is absent.
 
 ## Security contract
 
@@ -44,12 +48,20 @@ div.appendChild(text)
 div.insertBefore(comment, text)
 div.removeChild(comment)
 
-document.body.appendChild(div)
+document.body!.appendChild(div)
 ```
 
 Supported node operations include `appendChild`, `removeChild`, `replaceChild`, `insertBefore`, `cloneNode`, and `textContent`. Supported attribute operations include `getAttribute`, `setAttribute`, `hasAttribute`, and `removeAttribute`.
 
-Mutations reject cycles and invalid parent/child combinations. Inserting a `DocumentFragment` moves all of its children and leaves the fragment empty.
+Mutations reject cycles, invalid parent/child combinations, and invalid structural names. `replaceWith` applies its arguments as one ordered batch.
+
+Inserting a `DocumentFragment` moves all of its children and leaves the fragment empty. HTML names use ASCII-only case conversion.
+
+Structural node metadata is read-only. Tree validation uses canonical metadata if application code shadows a public getter.
+
+Numeric collection access matches `item()` access. Writes to numeric `NodeList` and `NamedNodeMap` properties fail.
+
+`NamedNodeMap.setNamedItem()` validates and copies its input. Changes to the input object do not change the stored attribute.
 
 The `innerHTML` getter serializes children. The setter creates a text node and does not parse markup.
 
@@ -59,7 +71,7 @@ The `innerHTML` getter serializes children. The setter creates a text node and d
 import { NodeFilter } from '@lpm.dev/neo.dom'
 
 const iterator = document.createNodeIterator(
-  document.body,
+  document.body!,
   NodeFilter.SHOW_ELEMENT
 )
 
@@ -70,6 +82,8 @@ while ((node = iterator.nextNode())) {
 ```
 
 Use `TreeWalker` for directional navigation and subtree-pruning filters. Use `NodeIterator` for a linear document-order scan.
+
+`NodeIterator.referenceNode` and `pointerBeforeReference` show the read-only iterator position.
 `TreeWalker` promotes descendants of `FILTER_SKIP` nodes and prunes descendants of `FILTER_REJECT` nodes in both traversal directions.
 
 ## Known scope

@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { DOMParser } from '../../src/parser/parser.js'
+import { Element } from '../../src/dom/element.js'
 import { serializeNode, serializeElement, serializeChildren, escapeHTML, escapeAttr } from '../../src/utils/serializer.js'
 import { NodeType } from '../../src/utils/constants.js'
 
@@ -102,6 +103,12 @@ describe('HTML Serializer', () => {
       const doc = parser.parseFromString('<input type="text" />', 'text/html')
       const element = doc.body.firstChild! as any
       expect(serializeElement(element)).toBe('<input type="text" />')
+    })
+
+    it('serializes obsolete void elements without end tags', () => {
+      for (const name of ['frame', 'basefont', 'bgsound', 'keygen']) {
+        expect(serializeElement(new Element(name))).toBe(`<${name} />`)
+      }
     })
   })
 

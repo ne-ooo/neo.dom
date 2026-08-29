@@ -9,7 +9,7 @@
  * const parser = new DOMParser()
  * const doc = parser.parseFromString('<p>Hello <strong>world</strong></p>', 'text/html')
  *
- * console.log(doc.body.innerHTML)
+ * console.log(doc.body?.innerHTML)
  * // '<p>Hello <strong>world</strong></p>'
  */
 

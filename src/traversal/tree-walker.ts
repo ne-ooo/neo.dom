@@ -171,23 +171,38 @@ export class TreeWalker implements ITreeWalker {
 
   /** Find the final accepted node in document order inside a visible subtree. */
   private lastAcceptedInSubtree(start: INode): INode | null {
-    let lastAccepted: INode | null = null
-    const stack: INode[] = [start]
+    type ReverseFrame = {
+      node: INode
+      result: number | null
+      nextChild: INode | null
+    }
+    const stack: ReverseFrame[] = [{ node: start, result: null, nextChild: null }]
 
     while (stack.length > 0) {
-      const node = stack.pop()
-      if (!node) continue
+      const frame = stack[stack.length - 1]
+      if (!frame) continue
 
-      const result = this.filterNode(node)
-      if (result === NodeFilter.FILTER_REJECT) continue
-      if (result === NodeFilter.FILTER_ACCEPT) lastAccepted = node
-
-      for (let child = node.lastChild; child; child = child.previousSibling) {
-        stack.push(child)
+      if (frame.result === null) {
+        frame.result = this.filterNode(frame.node)
+        if (frame.result === NodeFilter.FILTER_REJECT) {
+          stack.pop()
+          continue
+        }
+        frame.nextChild = frame.node.lastChild
       }
+
+      const child = frame.nextChild
+      if (child) {
+        frame.nextChild = child.previousSibling
+        stack.push({ node: child, result: null, nextChild: null })
+        continue
+      }
+
+      stack.pop()
+      if (frame.result === NodeFilter.FILTER_ACCEPT) return frame.node
     }
 
-    return lastAccepted
+    return null
   }
 
   private nextStructuralNode(node: INode, descend: boolean): INode | null {

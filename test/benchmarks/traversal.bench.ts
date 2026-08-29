@@ -8,6 +8,8 @@ import { bench, describe } from 'vitest'
 import { DOMParser } from '../../src/parser/parser.js'
 import { NodeIterator } from '../../src/traversal/iterator.js'
 import { NodeFilter } from '../../src/utils/constants.js'
+import { Element } from '../../src/dom/element.js'
+import { TreeWalker } from '../../src/traversal/tree-walker.js'
 
 let benchmarkSink = 0
 
@@ -112,5 +114,31 @@ describe('DOM Traversal Performance', () => {
       node = node.nextSibling
     }
     benchmarkSink ^= count
+  })
+
+  const reverseRoot = new Element('div')
+  const reverseSubtree = new Element('section')
+  const reverseCurrent = new Element('p')
+  for (let index = 0; index < 50_000; index++) {
+    reverseSubtree.appendChild(new Element('i'))
+  }
+  reverseRoot.appendChild(reverseSubtree)
+  reverseRoot.appendChild(reverseCurrent)
+
+  bench('TreeWalker previousNode - accepted tail fast path (neo.dom)', () => {
+    const walker = new TreeWalker(reverseRoot, NodeFilter.SHOW_ELEMENT)
+    walker.currentNode = reverseCurrent
+    benchmarkSink ^= walker.previousNode()?.nodeType ?? 0
+  })
+
+  bench('TreeWalker previousNode - full 50,000-child skipped scan (neo.dom)', () => {
+    let visits = 0
+    const walker = new TreeWalker(reverseRoot, NodeFilter.SHOW_ELEMENT, () => {
+      visits++
+      return NodeFilter.FILTER_SKIP
+    })
+    walker.currentNode = reverseCurrent
+    walker.previousNode()
+    benchmarkSink ^= visits
   })
 })

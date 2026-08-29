@@ -1,11 +1,12 @@
 /**
  * DOM Parsing Benchmarks
  *
- * Compares @lpm.dev/neo.dom against jsdom for HTML parsing performance
+ * Measures @lpm.dev/neo.dom parsing against a raw parse5 baseline
  */
 
 import { bench, describe } from 'vitest'
 import { DOMParser } from '../../src/parser/parser.js'
+import { parse } from 'parse5'
 
 let benchmarkSink = 0
 
@@ -82,5 +83,31 @@ describe('HTML Parsing Performance', () => {
   bench('Many attributes - 20 attrs (neo.dom)', () => {
     const doc = parser.parseFromString(manyAttrsHTML, 'text/html')
     benchmarkSink ^= doc.body.childNodes.length
+  })
+
+  const documentCommentsHTML = '<!--comment-->'.repeat(10_000)
+
+  bench('Document-level comments - 10,000 nodes (neo.dom)', () => {
+    const doc = parser.parseFromString(documentCommentsHTML, 'text/html')
+    benchmarkSink ^= doc.childNodes.length
+  })
+
+  const wideHTML = '<i></i>'.repeat(20_000)
+
+  bench('Wide document - 20,000 elements (parse5 baseline)', () => {
+    const doc = parse(wideHTML)
+    benchmarkSink ^= doc.childNodes.length
+  })
+
+  bench('Wide document - 20,000 elements (neo.dom)', () => {
+    const doc = parser.parseFromString(wideHTML, 'text/html')
+    benchmarkSink ^= doc.body!.childNodes.length
+  })
+
+  const fosterParentingHTML = `<table>${'x<div></div>'.repeat(10_000)}</table>`
+
+  bench('Foster parenting - 10,000 repetitions (neo.dom)', () => {
+    const doc = parser.parseFromString(fosterParentingHTML, 'text/html')
+    benchmarkSink ^= doc.body!.childNodes.length
   })
 })

@@ -9,6 +9,7 @@ import { DOMParser } from '../../src/parser/parser.js'
 import { serializeElement } from '../../src/utils/serializer.js'
 import type { Element as IElement, Node as INode } from '../../src/types.js'
 import { NodeType } from '../../src/utils/constants.js'
+import { Element } from '../../src/dom/element.js'
 
 let benchmarkSink = 0
 
@@ -73,5 +74,23 @@ describe('HTML Serialization Performance', () => {
   // innerHTML getter
   bench('element.innerHTML getter, uncached (neo.dom)', () => {
     benchmarkSink ^= complexElement.innerHTML.length
+  })
+
+  const manyAttrsElement = new Element('div')
+  for (let index = 0; index < 4_000; index++) {
+    manyAttrsElement.setAttribute(`data-${index}`, `value-${index}`)
+  }
+
+  bench('Serialize programmatic element - 4,000 attributes (neo.dom)', () => {
+    benchmarkSink ^= serializeElement(manyAttrsElement).length
+  })
+
+  const emptyElementsRoot = new Element('div')
+  for (let index = 0; index < 10_000; index++) {
+    emptyElementsRoot.appendChild(new Element('i'))
+  }
+
+  bench('Serialize 10,000 empty elements without collection allocation (neo.dom)', () => {
+    benchmarkSink ^= serializeElement(emptyElementsRoot).length
   })
 })

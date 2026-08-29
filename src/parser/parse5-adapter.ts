@@ -2,9 +2,17 @@
  * Converts parse5's HTML5 tree into neo.dom nodes.
  */
 
-import { parse, type DefaultTreeAdapterTypes } from 'parse5'
-import { Comment, Document, DocumentType, Text } from '../dom/document.js'
-import { Element } from '../dom/element.js'
+import {
+  defaultTreeAdapter,
+  Parser,
+  Tokenizer,
+  type DefaultTreeAdapterTypes,
+  type TokenHandler,
+  type TokenizerOptions,
+  type TreeAdapter,
+} from 'parse5'
+import { Comment, Document, DocumentFragment, DocumentType, Text } from '../dom/document.js'
+import { createParsedElement, Element, setParsedAttribute } from '../dom/element.js'
 import type { Node } from '../dom/node.js'
 import type { DOMParserOptions } from '../types.js'
 
@@ -13,77 +21,217 @@ type Parse5Child = DefaultTreeAdapterTypes.ChildNode
 type Parse5Element = DefaultTreeAdapterTypes.Element
 type Parse5Template = DefaultTreeAdapterTypes.Template
 type ResolvedDOMParserOptions = Required<DOMParserOptions>
+type Parse5TreeAdapter = TreeAdapter<DefaultTreeAdapterTypes.DefaultTreeAdapterMap>
+interface ConversionState {
+  readonly limits: ResolvedDOMParserOptions
+  nodeCount: number
+}
+
+interface ConversionFrame {
+  readonly children: Parse5Child[]
+  readonly target: Element
+  readonly depth: number
+  childIndex: number
+}
 
 /** Parse a complete HTML document with browser-compatible tree construction. */
 export function parseHTMLDocument(
   html: string,
   limits: ResolvedDOMParserOptions
 ): Document {
-  const source = parse(html, { scriptingEnabled: false })
-  enforceTreeLimits(source, limits)
-  return convertDocument(source)
+  const parser = new Parser<DefaultTreeAdapterTypes.DefaultTreeAdapterMap>({
+    scriptingEnabled: false,
+    treeAdapter: createLimitingTreeAdapter(limits),
+  })
+  parser.tokenizer = new AttributeLimitingTokenizer(
+    parser.options,
+    parser,
+    limits.maxAttributesPerElement
+  )
+  parser.tokenizer.write(html, true)
+  return convertDocument(parser.document, limits)
 }
 
-function enforceTreeLimits(source: Parse5Document, limits: ResolvedDOMParserOptions): void {
-  let nodeCount = 0
-  const stack: Array<{ node: Parse5Child; depth: number }> = []
+/** Stop unique attribute work before parse5's linear duplicate-name lookup grows quadratic. */
+class AttributeLimitingTokenizer extends Tokenizer {
+  private readonly attributeLimit: number
+  private attributeToken: object | null = null
+  private readonly attributeNames = new Set<string>()
 
-  for (let index = source.childNodes.length - 1; index >= 0; index--) {
-    const child = source.childNodes[index]
-    if (child) stack.push({ node: child, depth: 1 })
+  constructor(options: TokenizerOptions, handler: TokenHandler, attributeLimit: number) {
+    super(options, handler)
+    this.attributeLimit = attributeLimit
   }
 
-  while (stack.length > 0) {
-    const frame = stack.pop()
-    if (!frame) continue
+  protected override _leaveAttrName(): void {
+    const token = this.currentToken
+    if (token && 'attrs' in token) {
+      if (token !== this.attributeToken) {
+        this.attributeToken = token
+        this.attributeNames.clear()
+      }
 
+      const name = this.currentAttr.name
+      if (!this.attributeNames.has(name)) {
+        if (this.attributeNames.size >= this.attributeLimit) {
+          throw new RangeError(
+            `DOMParser maxAttributesPerElement exceeded: <${token.tagName}> has more than ${this.attributeLimit} attributes`
+          )
+        }
+        this.attributeNames.add(name)
+      }
+    }
+
+    super._leaveAttrName()
+  }
+}
+
+/** Abort parse5 tree construction as soon as a configured limit is crossed. */
+function createLimitingTreeAdapter(limits: ResolvedDOMParserOptions): Parse5TreeAdapter {
+  let nodeCount = 0
+  let openDepth = 0
+
+  const countNode = (): void => {
     nodeCount++
     if (nodeCount > limits.maxNodes) {
       throw new RangeError(
         `DOMParser maxNodes exceeded: parsed node count is greater than limit ${limits.maxNodes}`
       )
     }
-    if (frame.depth > limits.maxDepth) {
-      throw new RangeError(
-        `DOMParser maxDepth exceeded: parsed depth ${frame.depth} is greater than limit ${limits.maxDepth}`
-      )
-    }
+  }
 
-    if ('attrs' in frame.node && frame.node.attrs.length > limits.maxAttributesPerElement) {
-      throw new RangeError(
-        `DOMParser maxAttributesPerElement exceeded: <${frame.node.tagName}> has ${frame.node.attrs.length} attributes; limit ${limits.maxAttributesPerElement}`
-      )
-    }
+  return {
+    ...defaultTreeAdapter,
+    createElement(tagName, namespaceURI, attrs) {
+      countNode()
+      if (attrs.length > limits.maxAttributesPerElement) {
+        throw new RangeError(
+          `DOMParser maxAttributesPerElement exceeded: <${tagName}> has ${attrs.length} attributes; limit ${limits.maxAttributesPerElement}`
+        )
+      }
+      return defaultTreeAdapter.createElement(tagName, namespaceURI, attrs)
+    },
+    createCommentNode(data) {
+      countNode()
+      return defaultTreeAdapter.createCommentNode(data)
+    },
+    insertBefore(parentNode, newNode, referenceNode) {
+      const referenceIndex = findReferenceIndex(parentNode.childNodes, referenceNode)
+      parentNode.childNodes.splice(referenceIndex, 0, newNode)
+      newNode.parentNode = parentNode
+    },
+    adoptAttributes(recipient, attrs) {
+      const existingNames = new Set(recipient.attrs.map(attribute => attribute.name))
+      let adoptedCount = recipient.attrs.length
+      for (const attribute of attrs) {
+        if (!existingNames.has(attribute.name)) {
+          existingNames.add(attribute.name)
+          adoptedCount++
+        }
+      }
+      if (adoptedCount > limits.maxAttributesPerElement) {
+        throw new RangeError(
+          `DOMParser maxAttributesPerElement exceeded: <${recipient.tagName}> has more than ${limits.maxAttributesPerElement} attributes`
+        )
+      }
+      defaultTreeAdapter.adoptAttributes(recipient, attrs)
+    },
+    setDocumentType(document, name, publicId, systemId) {
+      const hasDocumentType = defaultTreeAdapter
+        .getChildNodes(document)
+        .some(node => defaultTreeAdapter.isDocumentTypeNode(node))
+      if (!hasDocumentType) countNode()
+      defaultTreeAdapter.setDocumentType(document, name, publicId, systemId)
+    },
+    insertText(parentNode, text) {
+      const lastChild = parentNode.childNodes[parentNode.childNodes.length - 1]
+      if (!lastChild || !defaultTreeAdapter.isTextNode(lastChild)) countNode()
+      defaultTreeAdapter.insertText(parentNode, text)
+    },
+    insertTextBefore(parentNode, text, referenceNode) {
+      const referenceIndex = findReferenceIndex(parentNode.childNodes, referenceNode)
+      const previousSibling = parentNode.childNodes[referenceIndex - 1]
+      if (previousSibling && defaultTreeAdapter.isTextNode(previousSibling)) {
+        previousSibling.value += text
+        return
+      }
 
-    const children = getConvertibleChildren(frame.node)
-    for (let index = children.length - 1; index >= 0; index--) {
-      const child = children[index]
-      if (child) stack.push({ node: child, depth: frame.depth + 1 })
-    }
+      countNode()
+      const textNode = defaultTreeAdapter.createTextNode(text)
+      parentNode.childNodes.splice(referenceIndex, 0, textNode)
+      textNode.parentNode = parentNode
+    },
+    onItemPush(item) {
+      openDepth++
+      if (openDepth > limits.maxOpenElements) {
+        throw new RangeError(
+          `DOMParser maxOpenElements exceeded: open element count ${openDepth} is greater than limit ${limits.maxOpenElements}`
+        )
+      }
+      defaultTreeAdapter.onItemPush?.(item)
+    },
+    onItemPop(item, newTop) {
+      openDepth--
+      defaultTreeAdapter.onItemPop?.(item, newTop)
+    },
   }
 }
 
-function convertDocument(source: Parse5Document): Document {
+/** Avoid a complete sibling scan when foster parenting inserts before the tail. */
+function findReferenceIndex<T>(children: T[], reference: T): number {
+  const tailIndex = children.length - 1
+  return children[tailIndex] === reference ? tailIndex : children.indexOf(reference)
+}
+
+function convertDocument(
+  source: Parse5Document,
+  limits: ResolvedDOMParserOptions
+): Document {
   const document = new Document()
   const documentElement = document.documentElement as Element
   const head = document.head as Element
   const body = document.body as Element
+  const state: ConversionState = { limits, nodeCount: 0 }
 
   const sourceDocumentElement = source.childNodes.find(isDocumentElement)
   if (sourceDocumentElement) {
+    validateSourceNode(sourceDocumentElement, 1, state)
     copyAttributes(sourceDocumentElement, documentElement)
-    populateDocumentElement(sourceDocumentElement, documentElement, head, body)
+    populateDocumentElement(sourceDocumentElement, documentElement, head, body, state)
   }
 
   let passedDocumentElement = false
-  for (const child of source.childNodes) {
+  let pendingComments = new DocumentFragment()
+
+  const flushComments = (): void => {
+    if (!pendingComments.firstChild) return
+    if (passedDocumentElement) {
+      document.appendChild(pendingComments)
+    } else {
+      document.insertBefore(pendingComments, documentElement)
+    }
+    pendingComments = new DocumentFragment()
+  }
+
+  for (let index = 0; index < source.childNodes.length; index++) {
+    const child = takeChild(source.childNodes, index)
+    if (!child) continue
+
     if (child === sourceDocumentElement) {
+      flushComments()
       passedDocumentElement = true
       continue
     }
 
-    const converted = convertSubtree(child)
+    const converted = convertSubtree(child, 1, state)
     if (!converted) continue
+
+    if (converted instanceof Comment) {
+      pendingComments.appendChild(converted)
+      continue
+    }
+
+    flushComments()
 
     if (passedDocumentElement) {
       document.appendChild(converted)
@@ -91,6 +239,8 @@ function convertDocument(source: Parse5Document): Document {
       document.insertBefore(converted, documentElement)
     }
   }
+  source.childNodes.length = 0
+  flushComments()
 
   return document
 }
@@ -99,74 +249,115 @@ function populateDocumentElement(
   source: Parse5Element,
   documentElement: Element,
   head: Element,
-  body: Element
+  body: Element,
+  state: ConversionState
 ): void {
   while (documentElement.firstChild) {
     documentElement.removeChild(documentElement.firstChild)
   }
 
   let hasHead = false
-  let hasBody = false
+  let hasBodyOrFrameset = false
 
-  for (const child of source.childNodes) {
+  const sourceChildren = source.childNodes
+  for (let index = 0; index < sourceChildren.length; index++) {
+    const child = takeChild(sourceChildren, index)
+    if (!child) continue
+
     if (isHTMLElement(child, 'head')) {
+      validateSourceNode(child, 2, state)
       copyAttributes(child, head)
-      appendConvertedChildren(child, head)
+      appendConvertedChildren(child, head, 2, state)
       documentElement.appendChild(head)
       hasHead = true
       continue
     }
 
     if (isHTMLElement(child, 'body')) {
+      validateSourceNode(child, 2, state)
       copyAttributes(child, body)
-      appendConvertedChildren(child, body)
+      appendConvertedChildren(child, body, 2, state)
       documentElement.appendChild(body)
-      hasBody = true
+      hasBodyOrFrameset = true
       continue
     }
 
-    const converted = convertSubtree(child)
+    if (isHTMLElement(child, 'frameset')) {
+      const frameset = convertSubtree(child, 2, state)
+      if (frameset) documentElement.appendChild(frameset)
+      hasBodyOrFrameset = true
+      continue
+    }
+
+    const converted = convertSubtree(child, 2, state)
     if (converted) documentElement.appendChild(converted)
   }
+  sourceChildren.length = 0
 
   if (!hasHead) documentElement.insertBefore(head, documentElement.firstChild)
-  if (!hasBody) documentElement.appendChild(body)
+  if (!hasBodyOrFrameset) documentElement.appendChild(body)
 }
 
-/** Convert a parse5 subtree with explicit frames so nesting cannot exhaust the call stack. */
-function convertSubtree(source: Parse5Child): Node | null {
-  const root = convertShallow(source)
+/** Convert and release a parse5 subtree with O(depth) auxiliary storage. */
+function convertSubtree(
+  source: Parse5Child,
+  depth: number,
+  state: ConversionState
+): Node | null {
+  const root = convertShallow(source, depth, state)
   if (!(root instanceof Element) || !('tagName' in source)) return root
 
-  const stack: Array<{ source: Parse5Element; target: Element }> = [
-    { source, target: root },
+  const stack: ConversionFrame[] = [
+    {
+      children: getConvertibleChildren(source),
+      target: root,
+      depth,
+      childIndex: 0,
+    },
   ]
 
   while (stack.length > 0) {
-    const frame = stack.pop()
+    const frame = stack[stack.length - 1]
     if (!frame) continue
 
-    const childFrames: Array<{ source: Parse5Element; target: Element }> = []
-    for (const child of getConvertibleChildren(frame.source)) {
-      const converted = convertShallow(child)
-      if (!converted) continue
-
-      frame.target.appendChild(converted)
-      if (converted instanceof Element && 'tagName' in child) {
-        childFrames.push({ source: child, target: converted })
-      }
+    if (frame.childIndex >= frame.children.length) {
+      frame.children.length = 0
+      stack.pop()
+      continue
     }
 
-    for (let index = childFrames.length - 1; index >= 0; index--) {
-      const childFrame = childFrames[index]
-      if (childFrame) stack.push(childFrame)
+    const child = takeChild(frame.children, frame.childIndex)
+    frame.childIndex++
+    if (!child) continue
+
+    const childDepth = frame.depth + 1
+    const converted = convertShallow(child, childDepth, state)
+    if (!converted) continue
+
+    frame.target.appendChild(converted)
+    if (converted instanceof Element && 'tagName' in child) {
+      const children = getConvertibleChildren(child)
+      if (children.length > 0) {
+        stack.push({
+          children,
+          target: converted,
+          depth: childDepth,
+          childIndex: 0,
+        })
+      }
     }
   }
 
   return root
 }
 
-function convertShallow(source: Parse5Child): Node | null {
+function convertShallow(
+  source: Parse5Child,
+  depth: number,
+  state: ConversionState
+): Node | null {
+  validateSourceNode(source, depth, state)
+
   if (source.nodeName === '#text' && 'value' in source) {
     return new Text(source.value)
   }
@@ -178,16 +369,56 @@ function convertShallow(source: Parse5Child): Node | null {
   }
   if (!('tagName' in source)) return null
 
-  const element = new Element(source.tagName, source.namespaceURI)
+  const element = createParsedElement(source.tagName, source.namespaceURI)
   copyAttributes(source, element)
   return element
 }
 
-function appendConvertedChildren(source: Parse5Element, target: Element): void {
-  for (const child of getConvertibleChildren(source)) {
-    const converted = convertSubtree(child)
+function appendConvertedChildren(
+  source: Parse5Element,
+  target: Element,
+  sourceDepth: number,
+  state: ConversionState
+): void {
+  const children = getConvertibleChildren(source)
+  for (let index = 0; index < children.length; index++) {
+    const child = takeChild(children, index)
+    if (!child) continue
+
+    const converted = convertSubtree(child, sourceDepth + 1, state)
     if (converted) target.appendChild(converted)
   }
+  children.length = 0
+}
+
+function validateSourceNode(
+  source: Parse5Child,
+  depth: number,
+  state: ConversionState
+): void {
+  state.nodeCount++
+  if (state.nodeCount > state.limits.maxNodes) {
+    throw new RangeError(
+      `DOMParser maxNodes exceeded: parsed node count is greater than limit ${state.limits.maxNodes}`
+    )
+  }
+  if (depth > state.limits.maxDepth) {
+    throw new RangeError(
+      `DOMParser maxDepth exceeded: parsed depth ${depth} is greater than limit ${state.limits.maxDepth}`
+    )
+  }
+  if ('attrs' in source && source.attrs.length > state.limits.maxAttributesPerElement) {
+    throw new RangeError(
+      `DOMParser maxAttributesPerElement exceeded: <${source.tagName}> has ${source.attrs.length} attributes; limit ${state.limits.maxAttributesPerElement}`
+    )
+  }
+}
+
+/** Remove a processed source reference without shifting a wide sibling array. */
+function takeChild(children: Parse5Child[], index: number): Parse5Child | null {
+  const child = children[index] ?? null
+  children[index] = null as unknown as Parse5Child
+  return child
 }
 
 function getConvertibleChildren(source: Parse5Child): Parse5Child[] {
@@ -206,7 +437,7 @@ function copyAttributes(source: Parse5Element, target: Element): void {
     const name = attribute.prefix
       ? `${attribute.prefix}:${attribute.name}`
       : attribute.name
-    target.setAttribute(name, attribute.value)
+    setParsedAttribute(target, name, attribute.value)
   }
 }
 

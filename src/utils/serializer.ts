@@ -4,7 +4,8 @@
  * Stack-safe serialization for the supported DOM subset.
  */
 
-import type { Node as INode, Element as IElement } from '../types.js'
+import type { Node as INode, Element as IElement, Attr } from '../types.js'
+import { getStoredAttributes } from '../dom/element-state.js'
 import { HTML_NAMESPACE, NodeType, VOID_ELEMENTS } from './constants.js'
 
 const RAW_TEXT_ELEMENTS = new Set([
@@ -34,10 +35,7 @@ export function serializeElement(element: IElement): string {
 /** Serialize the direct children of a node. */
 export function serializeChildren(node: INode): string {
   const tasks: SerializationTask[] = []
-  for (let index = node.childNodes.length - 1; index >= 0; index--) {
-    const child = node.childNodes.item(index)
-    if (child) tasks.push({ kind: 'node', node: child })
-  }
+  pushChildren(tasks, node)
   return serializeTasks(tasks)
 }
 
@@ -100,17 +98,15 @@ function serializeTasks(initialTasks: SerializationTask[]): string {
 }
 
 function pushChildren(stack: SerializationTask[], node: INode): void {
-  for (let index = node.childNodes.length - 1; index >= 0; index--) {
-    const child = node.childNodes.item(index)
-    if (child) stack.push({ kind: 'node', node: child })
+  for (let child = node.lastChild; child; child = child.previousSibling) {
+    stack.push({ kind: 'node', node: child })
   }
 }
 
 function serializeOpeningTag(element: IElement, tagName: string): string {
   const chunks = [`<${tagName}`]
-  for (let index = 0; index < element.attributes.length; index++) {
-    const attribute = element.attributes.item(index)
-    if (attribute) chunks.push(` ${attribute.name}=\"${escapeAttr(attribute.value)}\"`)
+  for (const attribute of getAttributesForSerialization(element)) {
+    chunks.push(` ${attribute.name}=\"${escapeAttr(attribute.value)}\"`)
   }
   chunks.push(
     element.namespaceURI === HTML_NAMESPACE && VOID_ELEMENTS.has(tagName)
@@ -118,6 +114,10 @@ function serializeOpeningTag(element: IElement, tagName: string): string {
       : '>'
   )
   return chunks.join('')
+}
+
+function getAttributesForSerialization(element: IElement): Iterable<Attr> {
+  return getStoredAttributes(element) ?? element.attributes
 }
 
 function serializeDocumentType(node: INode): string {

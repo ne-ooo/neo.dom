@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { DOMParser } from '../../src/parser/parser.js'
+import { DocumentFragment, Element } from '../../src/dom/index.js'
 import { NodeIterator } from '../../src/traversal/iterator.js'
 import { NodeFilter, NodeType } from '../../src/utils/constants.js'
 import type { Node as INode } from '../../src/types.js'
@@ -12,6 +13,23 @@ describe('NodeIterator', () => {
   const parser = new DOMParser()
 
   describe('Basic iteration', () => {
+    it('exposes the standard read-only iterator position', () => {
+      const root = new Element('root')
+      const child = new Element('child')
+      root.appendChild(child)
+      const iterator = new NodeIterator(root, NodeFilter.SHOW_ALL, null)
+
+      expect(iterator.referenceNode).toBe(root)
+      expect(iterator.pointerBeforeReference).toBe(true)
+      expect(iterator.nextNode()).toBe(root)
+      expect(iterator.referenceNode).toBe(root)
+      expect(iterator.pointerBeforeReference).toBe(false)
+      expect(iterator.nextNode()).toBe(child)
+      expect(iterator.referenceNode).toBe(child)
+      expect(Reflect.set(iterator, 'referenceNode', root)).toBe(false)
+      expect(Reflect.set(iterator, 'pointerBeforeReference', true)).toBe(false)
+    })
+
     it('should iterate through all nodes', () => {
       const doc = parser.parseFromString('<div><p>Text</p></div>', 'text/html')
       const root = doc.body.firstChild! // div
@@ -237,7 +255,7 @@ describe('NodeIterator', () => {
       expect((backward[backward.length - 1] as any).tagName.toLowerCase()).toBe('div') // div
     })
 
-    it('should return null at beginning', () => {
+    it('should return the reference node when direction changes at the beginning', () => {
       const doc = parser.parseFromString('<div><p>Text</p></div>', 'text/html')
       const root = doc.body.firstChild! // div
       const iterator = new NodeIterator(root, NodeFilter.SHOW_ELEMENT, null)
@@ -245,7 +263,7 @@ describe('NodeIterator', () => {
       // Iterate forward once to start
       iterator.nextNode() // div
 
-      // Go backward - should return null (can't go before root)
+      expect(iterator.previousNode()).toBe(root)
       expect(iterator.previousNode()).toBeNull()
     })
 
@@ -260,11 +278,17 @@ describe('NodeIterator', () => {
       const node2 = iterator.nextNode() // p 'A'
       expect((node2 as any).tagName.toLowerCase()).toBe('p')
 
-      const node3 = iterator.previousNode() // back to div
-      expect((node3 as any).tagName.toLowerCase()).toBe('div')
+      const node3 = iterator.previousNode() // p 'A' again
+      expect(node3).toBe(node2)
 
-      const node4 = iterator.nextNode() // forward to p 'A' again
-      expect((node4 as any).tagName.toLowerCase()).toBe('p')
+      const node4 = iterator.previousNode() // div
+      expect(node4).toBe(node1)
+
+      const node5 = iterator.nextNode() // div again
+      expect(node5).toBe(node1)
+
+      const node6 = iterator.nextNode() // p 'A' again
+      expect(node6).toBe(node2)
     })
   })
 
@@ -393,6 +417,104 @@ describe('NodeIterator', () => {
     })
   })
 
+  describe('Tree mutations', () => {
+    it('continues at the next sibling after the reference node is removed', () => {
+      const root = new Element('root')
+      const a = new Element('a')
+      const b = new Element('b')
+      const c = new Element('c')
+      root.appendChild(a)
+      root.appendChild(b)
+      root.appendChild(c)
+      const iterator = new NodeIterator(root, NodeFilter.SHOW_ALL, null)
+
+      expect(iterator.nextNode()).toBe(root)
+      expect(iterator.nextNode()).toBe(a)
+      root.removeChild(a)
+
+      expect(iterator.nextNode()).toBe(b)
+      expect(iterator.nextNode()).toBe(c)
+    })
+
+    it('preserves a before-reference position when that node is removed', () => {
+      const root = new Element('root')
+      const a = new Element('a')
+      const b = new Element('b')
+      root.appendChild(a)
+      root.appendChild(b)
+      const iterator = new NodeIterator(root, NodeFilter.SHOW_ALL, null)
+
+      iterator.nextNode()
+      iterator.nextNode()
+      expect(iterator.previousNode()).toBe(a)
+      root.removeChild(a)
+
+      expect(iterator.nextNode()).toBe(b)
+    })
+
+    it('adjusts the reference for replacement and textContent removal paths', () => {
+      const replacementRoot = new Element('root')
+      const oldChild = new Element('old')
+      const sibling = new Element('sibling')
+      const replacement = new Element('replacement')
+      replacementRoot.appendChild(oldChild)
+      replacementRoot.appendChild(sibling)
+      const replacementIterator = new NodeIterator(
+        replacementRoot,
+        NodeFilter.SHOW_ALL,
+        null
+      )
+      replacementIterator.nextNode()
+      replacementIterator.nextNode()
+
+      replacementRoot.replaceChild(replacement, oldChild)
+      expect(replacementIterator.nextNode()).toBe(replacement)
+
+      const textRoot = new Element('root')
+      const first = new Element('first')
+      const second = new Element('second')
+      textRoot.appendChild(first)
+      textRoot.appendChild(second)
+      const textIterator = new NodeIterator(textRoot, NodeFilter.SHOW_ALL, null)
+      textIterator.nextNode()
+      textIterator.nextNode()
+
+      textRoot.textContent = 'new'
+      expect(textIterator.nextNode()).toBe(textRoot.firstChild)
+      expect(textRoot.firstChild?.nodeValue).toBe('new')
+    })
+
+    it('adjusts references during fragment and bulk replaceWith detachment', () => {
+      const fragment = new DocumentFragment()
+      const fragmentFirst = new Element('first')
+      const fragmentSecond = new Element('second')
+      fragment.appendChild(fragmentFirst)
+      fragment.appendChild(fragmentSecond)
+      const fragmentIterator = new NodeIterator(fragment, NodeFilter.SHOW_ALL, null)
+      fragmentIterator.nextNode()
+      fragmentIterator.nextNode()
+
+      new Element('host').appendChild(fragment)
+      expect(fragmentIterator.nextNode()).toBeNull()
+
+      const parent = new Element('parent')
+      const target = new Element('target')
+      const first = new Element('first')
+      const second = new Element('second')
+      parent.appendChild(target)
+      parent.appendChild(first)
+      parent.appendChild(second)
+      const iterator = new NodeIterator(parent, NodeFilter.SHOW_ALL, null)
+      iterator.nextNode()
+      iterator.nextNode()
+      iterator.nextNode()
+
+      target.replaceWith(first, second)
+      expect(iterator.nextNode()).toBe(first)
+      expect(iterator.nextNode()).toBe(second)
+    })
+  })
+
   describe('Root element', () => {
     it('should include root in iteration', () => {
       const doc = parser.parseFromString('<div><p>Child</p></div>', 'text/html')
@@ -410,9 +532,8 @@ describe('NodeIterator', () => {
 
       iterator.nextNode() // div
 
-      // Try to go before root
-      const beforeRoot = iterator.previousNode()
-      expect(beforeRoot).toBeNull()
+      expect(iterator.previousNode()).toBe(root)
+      expect(iterator.previousNode()).toBeNull()
     })
   })
 })

@@ -49,6 +49,17 @@ describe('HTML5 parser integration', () => {
     expect(table.firstChild?.firstChild?.nodeName).toBe('TR')
   })
 
+  it('keeps foster-parented text and elements before the table in source order', () => {
+    const doc = parser.parseFromString(
+      '<main><table>x<div>y</div>z</table></main>',
+      'text/html'
+    )
+
+    expect(serializeElement(doc.body?.firstChild as any)).toBe(
+      '<main>x<div>y</div>z<table></table></main>'
+    )
+  })
+
   it('decodes named and astral numeric character references', () => {
     const doc = parser.parseFromString('<p>&copy; &#x1F600;</p>', 'text/html')
     expect(doc.body.textContent).toBe('© 😀')
@@ -77,5 +88,19 @@ describe('HTML5 parser integration', () => {
     expect(doc.firstChild?.nodeType).toBe(NodeType.COMMENT_NODE)
     expect(doc.lastChild?.nodeType).toBe(NodeType.COMMENT_NODE)
     expect(doc.body.childNodes.length).toBe(1)
+  })
+
+  it('uses frameset as the document body without adding a body element', () => {
+    const doc = parser.parseFromString(
+      '<frameset cols="50%,50%"><frame src="one"><frame src="two"></frameset>',
+      'text/html'
+    )
+
+    expect(doc.body?.nodeName).toBe('FRAMESET')
+    expect(Array.from(doc.documentElement?.childNodes ?? []).map(node => node.nodeName))
+      .toEqual(['HEAD', 'FRAMESET'])
+    expect(serializeNode(doc)).toBe(
+      '<html><head></head><frameset cols="50%,50%"><frame src="one" /><frame src="two" /></frameset></html>'
+    )
   })
 })

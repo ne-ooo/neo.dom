@@ -6,6 +6,7 @@
 
 import type { Node as INode, NodeIterator as INodeIterator, NodeFilterCallback } from '../types.js'
 import { NodeFilter } from '../utils/constants.js'
+import { registerNodeIterator } from './iterator-registry.js'
 
 /**
  * NodeIterator implementation
@@ -16,14 +17,48 @@ export class NodeIterator implements INodeIterator {
   readonly root: INode
   readonly whatToShow: number
   readonly filter: NodeFilterCallback | null
-  private currentNode: INode | null
-  private started: boolean = false
+  private _referenceNode: INode
+  private _pointerBeforeReference = true
 
   constructor(root: INode, whatToShow: number, filter: NodeFilterCallback | null = null) {
     this.root = root
     this.whatToShow = whatToShow
     this.filter = filter
-    this.currentNode = root
+    this._referenceNode = root
+    registerNodeIterator(root, this)
+  }
+
+  get referenceNode(): INode {
+    return this._referenceNode
+  }
+
+  get pointerBeforeReference(): boolean {
+    return this._pointerBeforeReference
+  }
+
+  /** Apply the DOM NodeIterator pre-removal steps while tree links are intact. */
+  adjustForNodeRemoval(node: INode): void {
+    if (node === this.root || !isInclusiveAncestor(node, this._referenceNode)) return
+
+    if (this._pointerBeforeReference) {
+      const following = this.firstFollowingNodeOutside(node)
+      if (following) {
+        this._referenceNode = following
+        return
+      }
+      this._pointerBeforeReference = false
+    }
+
+    const previous = node.previousSibling
+    if (!previous) {
+      const parent = node.parentNode
+      if (parent) this._referenceNode = parent
+      return
+    }
+
+    let reference = previous
+    while (reference.lastChild) reference = reference.lastChild
+    this._referenceNode = reference
   }
 
   /**
@@ -32,51 +67,24 @@ export class NodeIterator implements INodeIterator {
    * @returns Next node or null if at end
    */
   nextNode(): INode | null {
-    if (!this.started) {
-      this.started = true
-      // First call - check if root matches
-      if (this.acceptNode(this.root)) {
-        this.currentNode = this.root
-        return this.root
+    let node = this._referenceNode
+    let beforeNode = this._pointerBeforeReference
+
+    while (true) {
+      if (beforeNode) {
+        beforeNode = false
+      } else {
+        const next = this.nextInRoot(node)
+        if (!next) return null
+        node = next
+      }
+
+      if (this.acceptNode(node)) {
+        this._referenceNode = node
+        this._pointerBeforeReference = false
+        return node
       }
     }
-
-    // Traverse in document order (depth-first)
-    let node = this.currentNode
-
-    while (node) {
-      // Try first child
-      if (node.firstChild) {
-        node = node.firstChild
-        if (this.acceptNode(node)) {
-          this.currentNode = node
-          return node
-        }
-        continue
-      }
-
-      // Try next sibling
-      while (node) {
-        if (node.nextSibling) {
-          node = node.nextSibling
-          if (this.acceptNode(node)) {
-            this.currentNode = node
-            return node
-          }
-          break
-        }
-
-        // Move up to parent
-        if (node === this.root) {
-          // Reached root, iteration complete
-          return null
-        }
-
-        node = node.parentNode
-      }
-    }
-
-    return null
   }
 
   /**
@@ -85,49 +93,55 @@ export class NodeIterator implements INodeIterator {
    * @returns Previous node or null if at beginning
    */
   previousNode(): INode | null {
-    let node = this.currentNode
+    let node = this._referenceNode
+    let beforeNode = this._pointerBeforeReference
 
-    if (node === this.root) {
-      return null
+    while (true) {
+      if (beforeNode) {
+        const previous = this.previousInRoot(node)
+        if (!previous) return null
+        node = previous
+      } else {
+        beforeNode = true
+      }
+
+      if (this.acceptNode(node)) {
+        this._referenceNode = node
+        this._pointerBeforeReference = true
+        return node
+      }
+    }
+  }
+
+  private nextInRoot(node: INode): INode | null {
+    if (node.firstChild) return node.firstChild
+
+    let current: INode | null = node
+    while (current && current !== this.root) {
+      if (current.nextSibling) return current.nextSibling
+      current = current.parentNode
+    }
+    return null
+  }
+
+  private previousInRoot(node: INode): INode | null {
+    if (node === this.root) return null
+
+    if (node.previousSibling) {
+      let previous = node.previousSibling
+      while (previous.lastChild) previous = previous.lastChild
+      return previous
     }
 
-    // Traverse in reverse document order
-    while (node) {
-      // Try previous sibling's last descendant
-      if (node.previousSibling) {
-        node = node.previousSibling
+    return node.parentNode
+  }
 
-        // Go to last descendant
-        while (node.lastChild) {
-          node = node.lastChild
-        }
-
-        if (this.acceptNode(node)) {
-          this.currentNode = node
-          return node
-        }
-        continue
-      }
-
-      // Try parent
-      if (node.parentNode && node.parentNode !== this.root) {
-        node = node.parentNode
-        if (this.acceptNode(node)) {
-          this.currentNode = node
-          return node
-        }
-        continue
-      }
-
-      // Reached root
-      if (this.acceptNode(this.root)) {
-        this.currentNode = this.root
-        return this.root
-      }
-
-      return null
+  private firstFollowingNodeOutside(node: INode): INode | null {
+    let current: INode | null = node
+    while (current && current !== this.root) {
+      if (current.nextSibling) return current.nextSibling
+      current = current.parentNode
     }
-
     return null
   }
 
@@ -172,3 +186,15 @@ export class NodeIterator implements INodeIterator {
 
 // Export NodeFilter constants
 export { NodeFilter }
+
+function isInclusiveAncestor(ancestor: INode, node: INode): boolean {
+  const visited = new Set<INode>()
+  let current: INode | null = node
+
+  while (current && !visited.has(current)) {
+    if (current === ancestor) return true
+    visited.add(current)
+    current = current.parentNode
+  }
+  return false
+}

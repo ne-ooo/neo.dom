@@ -10,16 +10,16 @@
  */
 export interface Node {
   /** Node type (ELEMENT_NODE, TEXT_NODE, etc.) */
-  nodeType: number
+  readonly nodeType: number
 
   /** Node name (tag name for elements, '#text' for text nodes) */
-  nodeName: string
+  readonly nodeName: string
 
   /** Node value (text content for text nodes, null for elements) */
   nodeValue: string | null
 
   /** Parent node */
-  parentNode: Node | null
+  readonly parentNode: Node | null
 
   /** Child nodes list */
   childNodes: NodeList
@@ -70,7 +70,7 @@ export interface Node {
  */
 export interface Element extends Node {
   /** Uppercase for HTML elements; source casing for foreign-content elements */
-  tagName: string
+  readonly tagName: string
 
   /** Element local name, preserving foreign-content casing */
   readonly localName: string
@@ -79,7 +79,7 @@ export interface Element extends Node {
   readonly namespaceURI: string
 
   /** Attributes collection */
-  attributes: NamedNodeMap
+  readonly attributes: NamedNodeMap
 
   /** Inner HTML (serialized HTML of children) */
   innerHTML: string
@@ -136,13 +136,13 @@ export interface Comment extends Node {
  */
 export interface Document extends Node {
   /** Document head element */
-  readonly head: Element
+  readonly head: Element | null
 
   /** Document body element */
-  readonly body: Element
+  readonly body: Element | null
 
   /** Root HTML element */
-  readonly documentElement: Element
+  readonly documentElement: Element | null
 
   /**
    * Create a text node
@@ -212,6 +212,9 @@ export interface NodeList {
 
   /** Array access */
   [index: number]: Node
+
+  /** Iterate nodes in order */
+  [Symbol.iterator](): IterableIterator<Node>
 }
 
 /**
@@ -219,7 +222,7 @@ export interface NodeList {
  */
 export interface Attr {
   /** Attribute name */
-  name: string
+  readonly name: string
 
   /** Attribute value */
   value: string
@@ -238,14 +241,17 @@ export interface NamedNodeMap {
   /** Get attribute by name */
   getNamedItem(name: string): Attr | null
 
-  /** Set attribute */
+  /** Validate and store a copy of an attribute */
   setNamedItem(attr: Attr): Attr | null
 
   /** Remove attribute by name */
   removeNamedItem(name: string): Attr | null
 
   /** Array access */
-  [index: number]: Attr
+  readonly [index: number]: Attr
+
+  /** Iterate attributes in insertion order */
+  [Symbol.iterator](): IterableIterator<Attr>
 }
 
 /**
@@ -260,6 +266,12 @@ export interface NodeIterator {
 
   /** Filter function */
   readonly filter: NodeFilterCallback | null
+
+  /** Current reference node */
+  readonly referenceNode: Node
+
+  /** Whether the iterator is positioned before the reference node */
+  readonly pointerBeforeReference: boolean
 
   /** Get next node */
   nextNode(): Node | null
@@ -326,10 +338,16 @@ export interface DOMParserOptions {
   /** Maximum input length in JavaScript UTF-16 code units. Default: 10 MiB. */
   maxInputLength?: number
 
+  /** Maximum number of less-than signs in the input. Default: 250,000. */
+  maxMarkupStarts?: number
+
   /** Maximum number of parsed DOM nodes, excluding the Document node. Default: 100,000. */
   maxNodes?: number
 
-  /** Maximum parsed tree depth below the Document node. Default: 2,048. */
+  /** Maximum transient HTML parser open-element count. Default: 512. */
+  maxOpenElements?: number
+
+  /** Maximum final parsed tree depth below the Document node. Default: 2,048. */
   maxDepth?: number
 
   /** Maximum number of attributes on one element. Default: 1,024. */
