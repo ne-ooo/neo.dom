@@ -12,7 +12,12 @@ import {
   type TreeAdapter,
 } from 'parse5'
 import { Comment, Document, DocumentFragment, DocumentType, Text } from '../dom/document.js'
-import { createParsedElement, Element, setParsedAttribute } from '../dom/element.js'
+import {
+  createParsedElement,
+  Element,
+  HTMLTemplateElement,
+  setParsedAttribute,
+} from '../dom/element.js'
 import type { Node } from '../dom/node.js'
 import type { DOMParserOptions } from '../types.js'
 
@@ -29,7 +34,7 @@ interface ConversionState {
 
 interface ConversionFrame {
   readonly children: Parse5Child[]
-  readonly target: Element
+  readonly target: Element | DocumentFragment
   readonly depth: number
   childIndex: number
 }
@@ -72,14 +77,17 @@ class AttributeLimitingTokenizer extends Tokenizer {
       }
 
       const name = this.currentAttr.name
-      if (!this.attributeNames.has(name)) {
-        if (this.attributeNames.size >= this.attributeLimit) {
-          throw new RangeError(
-            `DOMParser maxAttributesPerElement exceeded: <${token.tagName}> has more than ${this.attributeLimit} attributes`
-          )
-        }
-        this.attributeNames.add(name)
+      if (this.attributeNames.has(name)) {
+        // parse5 would linearly scan every accepted attribute only to discard
+        // this duplicate. The Set has already established the same result.
+        return
       }
+      if (this.attributeNames.size >= this.attributeLimit) {
+        throw new RangeError(
+          `DOMParser maxAttributesPerElement exceeded: <${token.tagName}> has more than ${this.attributeLimit} attributes`
+        )
+      }
+      this.attributeNames.add(name)
     }
 
     super._leaveAttrName()
@@ -102,6 +110,10 @@ function createLimitingTreeAdapter(limits: ResolvedDOMParserOptions): Parse5Tree
 
   return {
     ...defaultTreeAdapter,
+    createDocumentFragment() {
+      countNode()
+      return defaultTreeAdapter.createDocumentFragment()
+    },
     createElement(tagName, namespaceURI, attrs) {
       countNode()
       if (attrs.length > limits.maxAttributesPerElement) {
@@ -310,7 +322,7 @@ function convertSubtree(
   const stack: ConversionFrame[] = [
     {
       children: getConvertibleChildren(source),
-      target: root,
+      target: getConversionTarget(root),
       depth,
       childIndex: 0,
     },
@@ -340,7 +352,7 @@ function convertSubtree(
       if (children.length > 0) {
         stack.push({
           children,
-          target: converted,
+          target: getConversionTarget(converted),
           depth: childDepth,
           childIndex: 0,
         })
@@ -369,6 +381,11 @@ function convertShallow(
   }
   if (!('tagName' in source)) return null
 
+  const template = source as Parse5Template
+  if (source.tagName === 'template' && template.content) {
+    countConvertedNode(state)
+  }
+
   const element = createParsedElement(source.tagName, source.namespaceURI)
   copyAttributes(source, element)
   return element
@@ -396,12 +413,7 @@ function validateSourceNode(
   depth: number,
   state: ConversionState
 ): void {
-  state.nodeCount++
-  if (state.nodeCount > state.limits.maxNodes) {
-    throw new RangeError(
-      `DOMParser maxNodes exceeded: parsed node count is greater than limit ${state.limits.maxNodes}`
-    )
-  }
+  countConvertedNode(state)
   if (depth > state.limits.maxDepth) {
     throw new RangeError(
       `DOMParser maxDepth exceeded: parsed depth ${depth} is greater than limit ${state.limits.maxDepth}`
@@ -410,6 +422,15 @@ function validateSourceNode(
   if ('attrs' in source && source.attrs.length > state.limits.maxAttributesPerElement) {
     throw new RangeError(
       `DOMParser maxAttributesPerElement exceeded: <${source.tagName}> has ${source.attrs.length} attributes; limit ${state.limits.maxAttributesPerElement}`
+    )
+  }
+}
+
+function countConvertedNode(state: ConversionState): void {
+  state.nodeCount++
+  if (state.nodeCount > state.limits.maxNodes) {
+    throw new RangeError(
+      `DOMParser maxNodes exceeded: parsed node count is greater than limit ${state.limits.maxNodes}`
     )
   }
 }
@@ -430,6 +451,10 @@ function getConvertibleChildren(source: Parse5Child): Parse5Child[] {
     return source.childNodes
   }
   return []
+}
+
+function getConversionTarget(element: Element): Element | DocumentFragment {
+  return element instanceof HTMLTemplateElement ? element.content : element
 }
 
 function copyAttributes(source: Parse5Element, target: Element): void {

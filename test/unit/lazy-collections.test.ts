@@ -8,13 +8,13 @@ describe('lazy DOM collections', () => {
     const child = new Text('value')
     parent.appendChild(child)
 
-    expect(Reflect.get(parent, '_childNodesList')).toBeNull()
-    expect(Reflect.get(child, '_childNodesList')).toBeNull()
+    expect(Reflect.get(parent, '_childNodesList')).toBeUndefined()
+    expect(Reflect.get(child, '_childNodesList')).toBeUndefined()
 
     const children = parent.childNodes
     expect(children.item(0)).toBe(child)
     expect(parent.childNodes).toBe(children)
-    expect(Reflect.get(child, '_childNodesList')).toBeNull()
+    expect(Reflect.get(child, '_childNodesList')).toBeUndefined()
   })
 
   it('rejects numeric writes to a live NodeList', () => {
@@ -38,8 +38,8 @@ describe('lazy DOM collections', () => {
     element.removeAttribute('missing')
     const clone = element.cloneNode() as Element
 
-    expect(Reflect.get(element, '_attributes')).toBeNull()
-    expect(Reflect.get(clone, '_attributes')).toBeNull()
+    expect(Reflect.get(element, '_attributes')).toBeUndefined()
+    expect(Reflect.get(clone, '_attributes')).toBeUndefined()
 
     const attributes = element.attributes
     expect(attributes.length).toBe(0)
@@ -52,11 +52,11 @@ describe('lazy DOM collections', () => {
     for (const child of children) root.appendChild(child)
 
     expect(serializeElement(root)).toBe(`<div>${'<i></i>'.repeat(children.length)}</div>`)
-    expect(Reflect.get(root, '_childNodesList')).toBeNull()
-    expect(Reflect.get(root, '_attributes')).toBeNull()
+    expect(Reflect.get(root, '_childNodesList')).toBeUndefined()
+    expect(Reflect.get(root, '_attributes')).toBeUndefined()
     for (const child of children) {
-      expect(Reflect.get(child, '_childNodesList')).toBeNull()
-      expect(Reflect.get(child, '_attributes')).toBeNull()
+      expect(Reflect.get(child, '_childNodesList')).toBeUndefined()
+      expect(Reflect.get(child, '_attributes')).toBeUndefined()
     }
   })
 })

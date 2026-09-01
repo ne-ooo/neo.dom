@@ -53,6 +53,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Limited published LPM files to `.lpm/skills`.
 - Exposed the read-only `NodeIterator.referenceNode` and `pointerBeforeReference` properties.
 - Documented that `NamedNodeMap.setNamedItem()` validates and copies its input.
+- Stored HTML template descendants in inert `template.content` fragments.
+- Made invalid `replaceWith()` batches leave all input trees unchanged.
+- Made `DocumentType` metadata immutable at runtime.
+- Corrected HTML serialization for void elements and non-breaking spaces.
+- Aligned read-only node declarations and unsupported document cloning with runtime behavior.
+- Made element construction faster with private fields and prototype getters.
+- Made same-position child insertions constant time while applying DOM pre-removal steps to live iterator positions.
+- Changed escaping to scan text and attribute values once.
+- Removed saved child lists after a fragment empties. Repeated references to the same fragment do not rescan prior children.
+- Kept wide leaf cloning on a path with no template lookup or child-group allocation.
+- Stored structural links, mutation helpers, and element attributes in ECMAScript private state.
+- Registered canonical node readers once and used direct edge readers for traversal.
+- Rejected base `Node` instances as tree-mutation parents.
 
 ### Security
 
@@ -64,6 +77,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Bounded token-heavy markup before parse5 can allocate its intermediate tree.
 - Stopped wide start tags at the configured attribute limit before duplicate-name checks become quadratic.
 - Prevented public metadata shadows from bypassing cycle detection.
+- Rejected base `Node` instances that impersonate concrete DOM node kinds.
+- Removed duplicate-attribute CPU amplification before parse5 attribute lookup.
+- Removed dead `NodeIterator` registrations with `FinalizationRegistry`.
+- Rejected direct and mutual cycles through a template-content host relationship.
+- Used canonical node state for serializer and traversal decisions.
+- Prevented collection views from exposing or replacing private backing storage.
+- Rejected comment data that can close its serialized comment.
+- Rejected unsafe doctype delimiters and selected a safe quote for valid identifiers.
 
 ## [0.1.0] - 2026-03-09
 

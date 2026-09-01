@@ -22,19 +22,19 @@ export interface Node {
   readonly parentNode: Node | null
 
   /** Child nodes list */
-  childNodes: NodeList
+  readonly childNodes: NodeList
 
   /** First child node */
-  firstChild: Node | null
+  readonly firstChild: Node | null
 
   /** Last child node */
-  lastChild: Node | null
+  readonly lastChild: Node | null
 
   /** Next sibling node */
-  nextSibling: Node | null
+  readonly nextSibling: Node | null
 
   /** Previous sibling node */
-  previousSibling: Node | null
+  readonly previousSibling: Node | null
 
   /** Text content (includes all descendant text) */
   textContent: string | null
@@ -144,6 +144,9 @@ export interface Document extends Node {
   /** Root HTML element */
   readonly documentElement: Element | null
 
+  /** Document cloning is not supported by this focused DOM. */
+  cloneNode(deep?: boolean): never
+
   /**
    * Create a text node
    */
@@ -152,6 +155,7 @@ export interface Document extends Node {
   /**
    * Create an element
    */
+  createElement(tagName: 'template'): HTMLTemplateElement
   createElement(tagName: string): Element
 
   /**
@@ -198,6 +202,11 @@ export interface DocumentType extends Node {
 export interface DocumentFragment extends Node {
   /** Children of the fragment */
   readonly children: Element[]
+}
+
+/** HTML template element with inert content stored in a document fragment. */
+export interface HTMLTemplateElement extends Element {
+  readonly content: DocumentFragment
 }
 
 /**

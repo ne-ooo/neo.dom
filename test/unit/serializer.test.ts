@@ -5,6 +5,8 @@
 import { describe, it, expect } from 'vitest'
 import { DOMParser } from '../../src/parser/parser.js'
 import { Element } from '../../src/dom/element.js'
+import { Comment, DocumentType, Text } from '../../src/dom/document.js'
+import { Node } from '../../src/dom/node.js'
 import { serializeNode, serializeElement, serializeChildren, escapeHTML, escapeAttr } from '../../src/utils/serializer.js'
 import { NodeType } from '../../src/utils/constants.js'
 
@@ -22,6 +24,10 @@ describe('HTML Serializer', () => {
       expect(escapeHTML('hello world')).toBe('hello world')
       expect(escapeHTML('123')).toBe('123')
     })
+
+    it('serializes non-breaking spaces as named references', () => {
+      expect(escapeHTML('\u00a0')).toBe('&nbsp;')
+    })
   })
 
   describe('escapeAttr', () => {
@@ -34,6 +40,10 @@ describe('HTML Serializer', () => {
     it('should handle attributes without special characters', () => {
       expect(escapeAttr('value')).toBe('value')
       expect(escapeAttr('test-123')).toBe('test-123')
+    })
+
+    it('serializes non-breaking spaces in attributes as named references', () => {
+      expect(escapeAttr('\u00a0')).toBe('&nbsp;')
     })
   })
 
@@ -90,24 +100,24 @@ describe('HTML Serializer', () => {
     it('should serialize void elements (img)', () => {
       const doc = parser.parseFromString('<img src="test.jpg" />', 'text/html')
       const element = doc.body.firstChild! as any
-      expect(serializeElement(element)).toBe('<img src="test.jpg" />')
+      expect(serializeElement(element)).toBe('<img src="test.jpg">')
     })
 
     it('should serialize void elements (br)', () => {
       const doc = parser.parseFromString('<br />', 'text/html')
       const element = doc.body.firstChild! as any
-      expect(serializeElement(element)).toBe('<br />')
+      expect(serializeElement(element)).toBe('<br>')
     })
 
     it('should serialize void elements (input)', () => {
       const doc = parser.parseFromString('<input type="text" />', 'text/html')
       const element = doc.body.firstChild! as any
-      expect(serializeElement(element)).toBe('<input type="text" />')
+      expect(serializeElement(element)).toBe('<input type="text">')
     })
 
     it('serializes obsolete void elements without end tags', () => {
       for (const name of ['frame', 'basefont', 'bgsound', 'keygen']) {
-        expect(serializeElement(new Element(name))).toBe(`<${name} />`)
+        expect(serializeElement(new Element(name))).toBe(`<${name}>`)
       }
     })
   })
@@ -194,6 +204,52 @@ describe('HTML Serializer', () => {
       const element = doc.body.firstChild! as any
       expect(element.innerHTML).toBe('')
     })
+
+    it('ignores shadowed structural properties during serialization', () => {
+      const host = new Element('div')
+      const text = new Text('<img src=x onerror=alert(1)>')
+      host.appendChild(text)
+      Object.defineProperty(text, 'nodeType', {
+        value: NodeType.DOCUMENT_TYPE_NODE,
+        configurable: true,
+      })
+      Object.defineProperty(text, 'parentNode', {
+        value: new Element('script'),
+        configurable: true,
+      })
+      Object.defineProperty(text, 'name', {
+        value: 'html><img src=x onerror=alert(1)>',
+        configurable: true,
+      })
+
+      expect(host.innerHTML).toBe('&lt;img src=x onerror=alert(1)&gt;')
+    })
+
+    it('ignores writable lookalike attribute backing fields', () => {
+      const host = new Element('div')
+      const child = new Element('span')
+      host.appendChild(child)
+      Reflect.set(child, '_attributes', [
+        { name: 'x><img src=x onerror=alert(1)//', value: '' },
+      ])
+
+      expect(host.innerHTML).toBe('<span></span>')
+      expect(Reflect.get(child.attributes, 'setParsedNamedItem')).toBeUndefined()
+      expect(Reflect.set(child.attributes, 'attrs', new Map())).toBe(false)
+    })
+
+    it('does not expose canonical state or parser-only mutation helpers', () => {
+      const element = new Element('span')
+
+      expect(Reflect.get(element, 'getOrCreateAttributeStorage')).toBeUndefined()
+      expect(Reflect.get(element, 'readCanonicalElementMetadata')).toBeUndefined()
+      expect(Reflect.get(element, 'getCloningChildGroups')).toBeUndefined()
+      expect(Reflect.get(element, 'insertCandidates')).toBeUndefined()
+      expect(Reflect.get(element.attributes, 'storeNamedItem')).toBeUndefined()
+      expect(Reflect.get(Node, 'setParentNode')).toBeUndefined()
+      expect(Reflect.get(Node, 'setPreviousSibling')).toBeUndefined()
+      expect(Reflect.get(Node.prototype, 'readCanonicalNodeMetadata')).toBeUndefined()
+    })
   })
 
   describe('Complex serialization', () => {
@@ -205,7 +261,7 @@ describe('HTML Serializer', () => {
     })
 
     it('should serialize mixed void and regular elements', () => {
-      const html = '<div><p>Text</p><img src="test.jpg" /><br /><span>More</span></div>'
+      const html = '<div><p>Text</p><img src="test.jpg"><br><span>More</span></div>'
       const doc = parser.parseFromString(html, 'text/html')
       const element = doc.body.firstChild! as any
       expect(serializeElement(element)).toBe(html)
@@ -224,6 +280,56 @@ describe('HTML Serializer', () => {
       const result = serializeElement(element)
       expect(result).toContain('title="&quot;test&quot;"')
       expect(result).toContain('&amp;&lt;&gt;')
+    })
+  })
+
+  describe('programmatic declaration safety', () => {
+    it('rejects comment data that can close its serialized comment', () => {
+      expect(() => serializeNode(
+        new Comment('--><img src=x onerror=alert(1)><!--')
+      )).toThrow('closing delimiter')
+      expect(() => serializeNode(
+        new Comment('--!><img src=x onerror=alert(1)><!--')
+      )).toThrow('closing delimiter')
+      expect(() => serializeNode(
+        new Comment('><img src=x onerror=alert(1)>')
+      )).toThrow('closing delimiter')
+      expect(() => serializeNode(
+        new Comment('-><img src=x onerror=alert(1)>')
+      )).toThrow('closing delimiter')
+    })
+
+    it('rejects doctype fields that can break out of the declaration', () => {
+      expect(() => serializeNode(
+        new DocumentType('html><img src=x onerror=alert(1)>')
+      )).toThrow('markup delimiter')
+      expect(() => serializeNode(
+        new DocumentType('html', '"><img src=x onerror=alert(1)>')
+      )).toThrow('markup delimiter')
+      expect(() => serializeNode(
+        new DocumentType('html', '', '"><img src=x onerror=alert(1)>')
+      )).toThrow('markup delimiter')
+    })
+
+    it('selects a safe quote for valid doctype identifiers', () => {
+      expect(serializeNode(new DocumentType('html', '"')))
+        .toBe(`<!DOCTYPE html PUBLIC '"'>`)
+      expect(serializeNode(new DocumentType('html', '', '"')))
+        .toBe(`<!DOCTYPE html SYSTEM '"'>`)
+      expect(serializeNode(new DocumentType('html', "'")))
+        .toBe(`<!DOCTYPE html PUBLIC "'">`)
+    })
+
+    it('serializes tokenizer-delimited HTML doctype names', () => {
+      expect(serializeNode(new DocumentType('123'))).toBe('<!DOCTYPE 123>')
+      expect(serializeNode(new DocumentType('x/y'))).toBe('<!DOCTYPE x/y>')
+      expect(serializeNode(new DocumentType('-'))).toBe('<!DOCTYPE ->')
+    })
+
+    it('preserves empty parsed doctypes but rejects whitespace-delimited names', () => {
+      expect(serializeNode(new DocumentType(''))).toBe('<!DOCTYPE >')
+      expect(() => serializeNode(new DocumentType('html PUBLIC "id"')))
+        .toThrow('markup delimiter')
     })
   })
 

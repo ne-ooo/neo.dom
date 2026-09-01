@@ -94,6 +94,19 @@ describe('parser resource limits', () => {
       .toEqual(['HEAD', 'FRAMESET'])
   })
 
+  it('counts each template content fragment as a parsed DOM node', () => {
+    expect(() => new DOMParser({ maxNodes: 4 }).parseFromString(
+      '<body><template></template></body>',
+      'text/html'
+    )).toThrow('maxNodes')
+
+    const document = new DOMParser({ maxNodes: 5 }).parseFromString(
+      '<body><template></template></body>',
+      'text/html'
+    )
+    expect(document.body?.firstChild?.nodeName).toBe('TEMPLATE')
+  })
+
   it('rejects invalid option values at construction', () => {
     expect(() => new DOMParser({ maxNodes: 0 })).toThrow('positive safe integer')
     expect(() => new DOMParser({ maxMarkupStarts: -1 })).toThrow('positive safe integer')

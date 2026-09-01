@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DOMParser } from '../../src/parser/parser.js'
-import { NodeType } from '../../src/utils/constants.js'
+import { HTMLTemplateElement } from '../../src/dom/element.js'
+import { NodeFilter, NodeType } from '../../src/utils/constants.js'
 import { serializeElement, serializeNode } from '../../src/utils/serializer.js'
 
 describe('HTML5 parser integration', () => {
@@ -90,6 +91,47 @@ describe('HTML5 parser integration', () => {
     expect(doc.body.childNodes.length).toBe(1)
   })
 
+  it('stores template descendants in inert content and excludes them from document traversal', () => {
+    const doc = parser.parseFromString(
+      '<body><template id="fixture"><p>x</p></template><span>tail</span></body>',
+      'text/html'
+    )
+    const template = doc.body.firstChild as HTMLTemplateElement
+
+    expect(template).toBeInstanceOf(HTMLTemplateElement)
+    expect(template.firstChild).toBeNull()
+    expect(template.content.firstChild?.nodeName).toBe('P')
+    expect(template.content.textContent).toBe('x')
+    expect(template.textContent).toBe('')
+    expect(template.innerHTML).toBe('<p>x</p>')
+    expect(serializeElement(template)).toBe('<template id="fixture"><p>x</p></template>')
+
+    const iterator = doc.createNodeIterator(doc.body, NodeFilter.SHOW_ELEMENT)
+    const names: string[] = []
+    let node
+    while ((node = iterator.nextNode())) names.push(node.nodeName)
+    expect(names).toEqual(['BODY', 'TEMPLATE', 'SPAN'])
+
+    const clone = template.cloneNode(true) as HTMLTemplateElement
+    expect(clone).toBeInstanceOf(HTMLTemplateElement)
+    expect(clone.firstChild).toBeNull()
+    expect(clone.content.firstChild?.nodeName).toBe('P')
+    expect(clone.innerHTML).toBe('<p>x</p>')
+
+    const created = doc.createElement('TEMPLATE') as HTMLTemplateElement
+    expect(created).toBeInstanceOf(HTMLTemplateElement)
+    created.innerHTML = '<b>text</b>'
+    expect(created.firstChild).toBeNull()
+    expect(created.content.firstChild?.nodeType).toBe(NodeType.TEXT_NODE)
+    expect(created.innerHTML).toBe('&lt;b&gt;text&lt;/b&gt;')
+
+    const ordinaryChild = doc.createElement('span')
+    created.appendChild(ordinaryChild)
+    const cloneWithBothChildGroups = created.cloneNode(true) as HTMLTemplateElement
+    expect(cloneWithBothChildGroups.firstChild?.nodeName).toBe('SPAN')
+    expect(cloneWithBothChildGroups.content.firstChild?.nodeType).toBe(NodeType.TEXT_NODE)
+  })
+
   it('uses frameset as the document body without adding a body element', () => {
     const doc = parser.parseFromString(
       '<frameset cols="50%,50%"><frame src="one"><frame src="two"></frameset>',
@@ -100,7 +142,7 @@ describe('HTML5 parser integration', () => {
     expect(Array.from(doc.documentElement?.childNodes ?? []).map(node => node.nodeName))
       .toEqual(['HEAD', 'FRAMESET'])
     expect(serializeNode(doc)).toBe(
-      '<html><head></head><frameset cols="50%,50%"><frame src="one" /><frame src="two" /></frameset></html>'
+      '<html><head></head><frameset cols="50%,50%"><frame src="one"><frame src="two"></frameset></html>'
     )
   })
 })

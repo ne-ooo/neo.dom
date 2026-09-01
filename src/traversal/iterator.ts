@@ -5,6 +5,10 @@
  */
 
 import type { Node as INode, NodeIterator as INodeIterator, NodeFilterCallback } from '../types.js'
+import {
+  type CanonicalTraversalReader,
+  getCanonicalTraversalReader,
+} from '../dom/node-state.js'
 import { NodeFilter } from '../utils/constants.js'
 import { registerNodeIterator } from './iterator-registry.js'
 
@@ -19,12 +23,14 @@ export class NodeIterator implements INodeIterator {
   readonly filter: NodeFilterCallback | null
   private _referenceNode: INode
   private _pointerBeforeReference = true
+  readonly #canonicalReader: CanonicalTraversalReader | undefined
 
   constructor(root: INode, whatToShow: number, filter: NodeFilterCallback | null = null) {
     this.root = root
     this.whatToShow = whatToShow
     this.filter = filter
     this._referenceNode = root
+    this.#canonicalReader = getCanonicalTraversalReader(root)
     registerNodeIterator(root, this)
   }
 
@@ -38,7 +44,7 @@ export class NodeIterator implements INodeIterator {
 
   /** Apply the DOM NodeIterator pre-removal steps while tree links are intact. */
   adjustForNodeRemoval(node: INode): void {
-    if (node === this.root || !isInclusiveAncestor(node, this._referenceNode)) return
+    if (node === this.root || !this.#isInclusiveAncestor(node, this._referenceNode)) return
 
     if (this._pointerBeforeReference) {
       const following = this.firstFollowingNodeOutside(node)
@@ -49,15 +55,16 @@ export class NodeIterator implements INodeIterator {
       this._pointerBeforeReference = false
     }
 
-    const previous = node.previousSibling
+    const previous = this.#previousSibling(node)
     if (!previous) {
-      const parent = node.parentNode
+      const parent = this.#parentNode(node)
       if (parent) this._referenceNode = parent
       return
     }
 
     let reference = previous
-    while (reference.lastChild) reference = reference.lastChild
+    let lastChild: INode | null
+    while ((lastChild = this.#lastChild(reference))) reference = lastChild
     this._referenceNode = reference
   }
 
@@ -114,12 +121,14 @@ export class NodeIterator implements INodeIterator {
   }
 
   private nextInRoot(node: INode): INode | null {
-    if (node.firstChild) return node.firstChild
+    const firstChild = this.#firstChild(node)
+    if (firstChild) return firstChild
 
     let current: INode | null = node
     while (current && current !== this.root) {
-      if (current.nextSibling) return current.nextSibling
-      current = current.parentNode
+      const nextSibling = this.#nextSibling(current)
+      if (nextSibling) return nextSibling
+      current = this.#parentNode(current)
     }
     return null
   }
@@ -127,20 +136,23 @@ export class NodeIterator implements INodeIterator {
   private previousInRoot(node: INode): INode | null {
     if (node === this.root) return null
 
-    if (node.previousSibling) {
-      let previous = node.previousSibling
-      while (previous.lastChild) previous = previous.lastChild
+    const previousSibling = this.#previousSibling(node)
+    if (previousSibling) {
+      let previous = previousSibling
+      let lastChild: INode | null
+      while ((lastChild = this.#lastChild(previous))) previous = lastChild
       return previous
     }
 
-    return node.parentNode
+    return this.#parentNode(node)
   }
 
   private firstFollowingNodeOutside(node: INode): INode | null {
     let current: INode | null = node
     while (current && current !== this.root) {
-      if (current.nextSibling) return current.nextSibling
-      current = current.parentNode
+      const nextSibling = this.#nextSibling(current)
+      if (nextSibling) return nextSibling
+      current = this.#parentNode(current)
     }
     return null
   }
@@ -179,22 +191,58 @@ export class NodeIterator implements INodeIterator {
     }
 
     // Check specific node type
-    const nodeTypeMask = 1 << (node.nodeType - 1)
+    const nodeTypeMask = 1 << (this.#nodeType(node) - 1)
     return (this.whatToShow & nodeTypeMask) !== 0
+  }
+
+  #nodeType(node: INode): number {
+    return this.#canonicalReader
+      ? this.#canonicalReader.nodeType(node)
+      : node.nodeType
+  }
+
+  #parentNode(node: INode): INode | null {
+    return this.#canonicalReader
+      ? this.#canonicalReader.parentNode<INode>(node)
+      : node.parentNode
+  }
+
+  #firstChild(node: INode): INode | null {
+    return this.#canonicalReader
+      ? this.#canonicalReader.firstChild<INode>(node)
+      : node.firstChild
+  }
+
+  #lastChild(node: INode): INode | null {
+    return this.#canonicalReader
+      ? this.#canonicalReader.lastChild<INode>(node)
+      : node.lastChild
+  }
+
+  #nextSibling(node: INode): INode | null {
+    return this.#canonicalReader
+      ? this.#canonicalReader.nextSibling<INode>(node)
+      : node.nextSibling
+  }
+
+  #previousSibling(node: INode): INode | null {
+    return this.#canonicalReader
+      ? this.#canonicalReader.previousSibling<INode>(node)
+      : node.previousSibling
+  }
+
+  #isInclusiveAncestor(ancestor: INode, node: INode): boolean {
+    const visited = new Set<INode>()
+    let current: INode | null = node
+
+    while (current && !visited.has(current)) {
+      if (current === ancestor) return true
+      visited.add(current)
+      current = this.#parentNode(current)
+    }
+    return false
   }
 }
 
 // Export NodeFilter constants
 export { NodeFilter }
-
-function isInclusiveAncestor(ancestor: INode, node: INode): boolean {
-  const visited = new Set<INode>()
-  let current: INode | null = node
-
-  while (current && !visited.has(current)) {
-    if (current === ancestor) return true
-    visited.add(current)
-    current = current.parentNode
-  }
-  return false
-}

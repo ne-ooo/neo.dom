@@ -6,7 +6,7 @@
 
 import { bench, describe } from 'vitest'
 import { DOMParser } from '../../src/parser/parser.js'
-import { serializeElement } from '../../src/utils/serializer.js'
+import { escapeAttr, escapeHTML, serializeElement } from '../../src/utils/serializer.js'
 import type { Element as IElement, Node as INode } from '../../src/types.js'
 import { NodeType } from '../../src/utils/constants.js'
 import { Element } from '../../src/dom/element.js'
@@ -92,5 +92,15 @@ describe('HTML Serialization Performance', () => {
 
   bench('Serialize 10,000 empty elements without collection allocation (neo.dom)', () => {
     benchmarkSink ^= serializeElement(emptyElementsRoot).length
+  })
+
+  const escapeHeavyText = '&<>"\u00a0plain'.repeat(250_000)
+
+  bench('Escape a large mixed text payload in one pass', () => {
+    benchmarkSink ^= escapeHTML(escapeHeavyText).length
+  })
+
+  bench('Escape a large mixed attribute payload in one pass', () => {
+    benchmarkSink ^= escapeAttr(escapeHeavyText).length
   })
 })

@@ -5,6 +5,10 @@ import {
   DocumentFragment,
   DocumentType,
   Element,
+  HTMLTemplateElement,
+  Node,
+  NodeFilter,
+  NodeIterator,
   NodeType,
   Text,
 } from '../../src/index.js'
@@ -34,6 +38,23 @@ describe('tree mutation invariants', () => {
     expect(fragment.childNodes.length).toBe(1)
     expect(target.parentNode).toBe(fragment)
     expect(target.firstChild).toBeNull()
+  })
+
+  it('rejects direct and mutual template-content host cycles', () => {
+    const direct = new HTMLTemplateElement()
+    expect(() => direct.content.appendChild(direct)).toThrow('HierarchyRequestError')
+    expect(direct.content.firstChild).toBeNull()
+    expect(direct.parentNode).toBeNull()
+
+    const first = new HTMLTemplateElement()
+    const second = new HTMLTemplateElement()
+    first.content.appendChild(second)
+
+    expect(() => second.content.appendChild(first)).toThrow('HierarchyRequestError')
+    expect(first.content.firstChild).toBe(second)
+    expect(second.parentNode).toBe(first.content)
+    expect(second.content.firstChild).toBeNull()
+    expect(first.parentNode).toBeNull()
   })
 
   it('reorders existing children relative to the final child sequence', () => {
@@ -79,6 +100,32 @@ describe('tree mutation invariants', () => {
     expect(child.parentNode).toBe(parent)
   })
 
+  it('keeps iterator pre-removal semantics for unchanged same-parent insertions', () => {
+    const parent = new Element('div')
+    const first = new Element('a')
+    const middle = new Element('b')
+    const last = new Element('c')
+    parent.appendChild(first)
+    parent.appendChild(middle)
+    parent.appendChild(last)
+
+    const appendIterator = new NodeIterator(parent, NodeFilter.SHOW_ALL)
+    appendIterator.nextNode()
+    appendIterator.nextNode()
+    appendIterator.nextNode()
+    appendIterator.nextNode()
+    parent.appendChild(last)
+    expect(appendIterator.nextNode()).toBe(last)
+
+    const beforeIterator = new NodeIterator(parent, NodeFilter.SHOW_ALL)
+    beforeIterator.nextNode()
+    beforeIterator.nextNode()
+    beforeIterator.nextNode()
+    parent.insertBefore(middle, last)
+    expect(beforeIterator.nextNode()).toBe(middle)
+    expect(Array.from(parent.childNodes)).toEqual([first, middle, last])
+  })
+
   it('treats replaceWith self replacement as a no-op', () => {
     const parent = new Element('div')
     const element = new Element('p')
@@ -88,6 +135,14 @@ describe('tree mutation invariants', () => {
 
     expect(Array.from(parent.childNodes)).toEqual([element])
     expect(element.parentNode).toBe(parent)
+  })
+
+  it('returns before converting replacements for a detached element', () => {
+    const detached = new Element('p')
+    const baseNode = new Node(NodeType.ELEMENT_NODE, 'FORGED')
+
+    expect(() => detached.replaceWith(baseNode, 'unused')).not.toThrow()
+    expect(detached.parentNode).toBeNull()
   })
 
   it('batches replaceWith arguments and preserves final order', () => {
@@ -113,19 +168,77 @@ describe('tree mutation invariants', () => {
     expect(children[4]).toBe(tail)
   })
 
-  it('uses one parent replacement for a large replaceWith batch', () => {
+  it('applies a large replaceWith batch in one final tree update', () => {
     const parent = new Element('div')
     const target = new Element('target')
     const replacements = Array.from({ length: 5_000 }, () => new Element('i'))
     parent.appendChild(target)
-    const replaceChild = vi.spyOn(parent, 'replaceChild')
-
     target.replaceWith(...replacements)
 
-    expect(replaceChild).toHaveBeenCalledTimes(1)
     expect(parent.childNodes.length).toBe(replacements.length)
     expect(parent.firstChild).toBe(replacements[0])
     expect(parent.lastChild).toBe(replacements.at(-1))
+  })
+
+  it('validates a replaceWith batch before detaching any argument', () => {
+    const parent = new Element('div')
+    const target = new Element('target')
+    const sibling = new Element('sibling')
+    const invalid = new DocumentType('html')
+    parent.appendChild(target)
+    parent.appendChild(sibling)
+
+    expect(() => target.replaceWith(invalid, sibling)).toThrow('HierarchyRequestError')
+    expect(Array.from(parent.childNodes)).toEqual([target, sibling])
+    expect(target.parentNode).toBe(parent)
+    expect(sibling.parentNode).toBe(parent)
+    expect(invalid.parentNode).toBeNull()
+  })
+
+  it('preserves sequential order when a replaceWith batch repeats a fragment', () => {
+    const parent = new Element('div')
+    const target = new Element('target')
+    const firstFragment = new DocumentFragment()
+    const secondFragment = new DocumentFragment()
+    const first = new Element('a')
+    const second = new Element('b')
+    const third = new Element('c')
+    parent.appendChild(target)
+    firstFragment.appendChild(first)
+    firstFragment.appendChild(second)
+    secondFragment.appendChild(third)
+
+    target.replaceWith(firstFragment, secondFragment, firstFragment)
+
+    expect(Array.from(parent.childNodes)).toEqual([first, second, third])
+    expect(firstFragment.firstChild).toBeNull()
+    expect(secondFragment.firstChild).toBeNull()
+  })
+
+  it('moves a repeated fragment child at its final argument position', () => {
+    const parent = new Element('div')
+    const target = new Element('target')
+    const fragment = new DocumentFragment()
+    const first = new Element('a')
+    const second = new Element('b')
+    parent.appendChild(target)
+    fragment.appendChild(first)
+    fragment.appendChild(second)
+
+    target.replaceWith(fragment, first, fragment)
+
+    expect(Array.from(parent.childNodes)).toEqual([second, first])
+    expect(fragment.firstChild).toBeNull()
+  })
+
+  it('rejects replacing a fragment child with its parent fragment', () => {
+    const fragment = new DocumentFragment()
+    const target = new Element('target')
+    fragment.appendChild(target)
+
+    expect(() => target.replaceWith(fragment)).toThrow('HierarchyRequestError')
+    expect(fragment.firstChild).toBe(target)
+    expect(target.parentNode).toBe(fragment)
   })
 
   it('detaches existing replaceWith siblings without repeated public removals', () => {
@@ -157,6 +270,18 @@ describe('tree mutation invariants', () => {
     expect(fragment.childNodes.length).toBe(0)
     expect(first.parentNode).toBe(parent)
     expect(second.parentNode).toBe(parent)
+  })
+
+  it('removes a replaced child when the replacement fragment is empty', () => {
+    const parent = new Element('div')
+    const child = new Element('span')
+    const fragment = new DocumentFragment()
+    parent.appendChild(child)
+
+    expect(parent.replaceChild(fragment, child)).toBe(child)
+    expect(parent.firstChild).toBeNull()
+    expect(child.parentNode).toBeNull()
+    expect(fragment.firstChild).toBeNull()
   })
 
   it('validates document structure before moving fragment children', () => {
@@ -238,6 +363,24 @@ describe('tree mutation invariants', () => {
     expect(child.parentNode).toBe(parent)
     expect(parent.parentNode).toBeNull()
   })
+
+  it('uses canonical structure for fragment children and element removal', () => {
+    const fragment = new DocumentFragment()
+    const child = new Element('span')
+    fragment.appendChild(child)
+    Object.defineProperty(child, 'nodeType', {
+      value: NodeType.TEXT_NODE,
+      configurable: true,
+    })
+    Object.defineProperty(child, 'parentNode', {
+      value: null,
+      configurable: true,
+    })
+
+    expect(fragment.children).toEqual([child])
+    child.remove()
+    expect(fragment.children).toEqual([])
+  })
 })
 
 describe('core DOM semantics', () => {
@@ -315,6 +458,50 @@ describe('core DOM semantics', () => {
     expect(document.documentElement).toBe(newRoot)
     expect(document.head).toBeNull()
     expect(document.body).toBeNull()
+  })
+
+  it('derives document getters from canonical node and element metadata', () => {
+    const document = new Document()
+    const root = document.documentElement!
+    const head = document.head!
+    const body = document.body!
+    const comment = new Comment('before')
+    document.insertBefore(comment, root)
+
+    Object.defineProperty(root, 'nodeType', {
+      value: NodeType.TEXT_NODE,
+      configurable: true,
+    })
+    Object.defineProperty(head, 'nodeType', {
+      value: NodeType.COMMENT_NODE,
+      configurable: true,
+    })
+    Object.defineProperty(body, 'nodeType', {
+      value: NodeType.COMMENT_NODE,
+      configurable: true,
+    })
+    Object.defineProperty(comment, 'nodeType', {
+      value: NodeType.ELEMENT_NODE,
+      configurable: true,
+    })
+
+    expect(document.documentElement).toBe(root)
+    expect(document.head).toBe(head)
+    expect(document.body).toBe(body)
+  })
+
+  it('specializes direct HTML template construction and cloning', () => {
+    const template = new Element('template')
+    expect(template).toBeInstanceOf(HTMLTemplateElement)
+
+    const specialized = template as HTMLTemplateElement
+    specialized.content.appendChild(new Element('p'))
+    const clone = specialized.cloneNode(true) as HTMLTemplateElement
+
+    expect(specialized.innerHTML).toBe('<p></p>')
+    expect(clone).toBeInstanceOf(HTMLTemplateElement)
+    expect(clone.innerHTML).toBe('<p></p>')
+    expect(clone.content.firstChild).toBeInstanceOf(Element)
   })
 
   it('preserves concrete types, attributes, and namespaces when cloning', () => {

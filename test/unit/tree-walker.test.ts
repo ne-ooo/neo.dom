@@ -157,7 +157,9 @@ describe('TreeWalker conformance', () => {
     for (let index = 0; index < 1_000; index++) {
       parent.appendChild(new Element('span'))
     }
-    const itemSpy = vi.spyOn(parent.childNodes, 'item')
+    expect(Reflect.defineProperty(parent.childNodes, 'item', {
+      value: () => null,
+    })).toBe(false)
 
     let count = 0
     let node = parent.firstChild
@@ -167,7 +169,6 @@ describe('TreeWalker conformance', () => {
     }
 
     expect(count).toBe(1_000)
-    expect(itemSpy).not.toHaveBeenCalled()
   })
 
   it('keeps sibling pointers correct across removal and reordering', () => {
@@ -190,5 +191,35 @@ describe('TreeWalker conformance', () => {
     expect(a.nextSibling).toBeNull()
     expect(c.nextSibling).toBe(b)
     expect(b.previousSibling).toBe(c)
+  })
+
+  it('uses canonical tree links when public structural getters are shadowed', () => {
+    const root = new Element('root')
+    const first = new Element('first')
+    const nested = new Element('nested')
+    const second = new Element('second')
+    first.appendChild(nested)
+    root.appendChild(first)
+    root.appendChild(second)
+
+    Object.defineProperties(root, {
+      firstChild: { value: second, configurable: true },
+      nodeType: { value: 3, configurable: true },
+    })
+    Object.defineProperties(first, {
+      parentNode: { value: null, configurable: true },
+      firstChild: { value: null, configurable: true },
+      nextSibling: { value: null, configurable: true },
+    })
+    Object.defineProperties(nested, {
+      parentNode: { value: null, configurable: true },
+      previousSibling: { value: second, configurable: true },
+    })
+
+    const walker = new TreeWalker(root, NodeFilter.SHOW_ELEMENT)
+    expect(walker.firstChild()).toBe(first)
+    expect(walker.firstChild()).toBe(nested)
+    expect(walker.parentNode()).toBe(first)
+    expect(walker.nextSibling()).toBe(second)
   })
 })

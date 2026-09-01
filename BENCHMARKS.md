@@ -24,6 +24,14 @@ The parsing suite includes a raw parse5 baseline and a 20,000-element wide docum
 
 The mutation suite measures lazy leaf construction and 4,000 attribute removals. It also measures a batched replacement with 2,000 nodes.
 
+The suite measures 100 references to one 10,000-child fragment. This case detects rescans after the fragment becomes empty.
+
+The mutation suite measures a same-position insertion in a parent with 100,000 children.
+
+The mutation suite deep-clones 50,000 wide leaves. This case detects per-leaf allocations and template lookups.
+
+The serialization suite measures one-pass escaping for large text and attribute values.
+
 The traversal suite includes 20,000 sibling links. It measures an accepted-tail fast path across 50,000 children.
 
 The traversal suite also measures a full skipped scan of the same 50,000 children.

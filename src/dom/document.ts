@@ -11,13 +11,23 @@ import type {
   Comment as IComment,
   DocumentFragment as IDocumentFragment,
   DocumentType as IDocumentType,
+  HTMLTemplateElement as IHTMLTemplateElement,
   NodeIterator as INodeIterator,
   TreeWalker as ITreeWalker,
   NodeFilterCallback,
 } from '../types.js'
-import { Node } from './node.js'
-import { Element } from './element.js'
+import { Node, registerConcreteNode } from './node.js'
+import { createHTMLElement, Element } from './element.js'
+import {
+  ElementMetadataField,
+  getCanonicalElementMetadataField,
+} from './element-state.js'
 import { HTML_NAMESPACE, NodeType } from '../utils/constants.js'
+import {
+  getCanonicalFirstChild,
+  getCanonicalNextSibling,
+  getCanonicalNodeType,
+} from './node-state.js'
 import { NodeIterator } from '../traversal/iterator.js'
 import { TreeWalker } from '../traversal/tree-walker.js'
 
@@ -29,6 +39,7 @@ export class Text extends Node implements IText {
 
   constructor(text: string) {
     super(NodeType.TEXT_NODE, '#text', text)
+    registerConcreteNode(this)
     this.data = text
   }
 
@@ -61,6 +72,7 @@ export class Comment extends Node implements IComment {
 
   constructor(data: string) {
     super(NodeType.COMMENT_NODE, '#comment', data)
+    registerConcreteNode(this)
     this.data = data
   }
 
@@ -91,12 +103,21 @@ export class Comment extends Node implements IComment {
 export class DocumentFragment extends Node implements IDocumentFragment {
   constructor() {
     super(NodeType.DOCUMENT_FRAGMENT_NODE, '#document-fragment', null)
+    registerConcreteNode(this)
   }
 
   get children(): IElement[] {
-    return Array.from(this.childNodes).filter(
-      node => node.nodeType === NodeType.ELEMENT_NODE
-    ) as IElement[]
+    const children: IElement[] = []
+    for (
+      let child = getCanonicalFirstChild<Node>(this) ?? null;
+      child;
+      child = getCanonicalNextSibling<Node>(child) ?? null
+    ) {
+      if (getCanonicalNodeType(child) === NodeType.ELEMENT_NODE) {
+        children.push(child as unknown as IElement)
+      }
+    }
+    return children
   }
 
   protected override cloneShallow(): DocumentFragment {
@@ -112,19 +133,31 @@ export class DocumentFragment extends Node implements IDocumentFragment {
  * Document type declaration.
  */
 export class DocumentType extends Node implements IDocumentType {
-  readonly name: string
-  readonly publicId: string
-  readonly systemId: string
+  readonly name!: string
+  readonly publicId!: string
+  readonly systemId!: string
 
   constructor(name: string, publicId: string = '', systemId: string = '') {
     super(NodeType.DOCUMENT_TYPE_NODE, name, null)
-    this.name = name
-    this.publicId = publicId
-    this.systemId = systemId
+    registerConcreteNode(this)
+    Object.defineProperties(this, {
+      name: immutableProperty(name),
+      publicId: immutableProperty(publicId),
+      systemId: immutableProperty(systemId),
+    })
   }
 
   protected override cloneShallow(): DocumentType {
     return new DocumentType(this.name, this.publicId, this.systemId)
+  }
+}
+
+function immutableProperty(value: string): PropertyDescriptor {
+  return {
+    value,
+    enumerable: true,
+    writable: false,
+    configurable: false,
   }
 }
 
@@ -134,6 +167,7 @@ export class DocumentType extends Node implements IDocumentType {
 export class Document extends Node implements IDocument {
   constructor() {
     super(NodeType.DOCUMENT_NODE, '#document', null)
+    registerConcreteNode(this)
 
     const documentElement = new Element('html')
     const head = new Element('head')
@@ -152,8 +186,14 @@ export class Document extends Node implements IDocument {
   }
 
   get documentElement(): IElement | null {
-    for (let child = this.firstChild; child; child = child.nextSibling) {
-      if (child.nodeType === NodeType.ELEMENT_NODE) return child as unknown as IElement
+    for (
+      let child = getCanonicalFirstChild<Node>(this) ?? null;
+      child;
+      child = getCanonicalNextSibling<Node>(child) ?? null
+    ) {
+      if (getCanonicalNodeType(child) === NodeType.ELEMENT_NODE) {
+        return child as unknown as IElement
+      }
     }
     return null
   }
@@ -166,8 +206,10 @@ export class Document extends Node implements IDocument {
     return new Text(text)
   }
 
+  createElement(tagName: 'template'): IHTMLTemplateElement
+  createElement(tagName: string): IElement
   createElement(tagName: string): IElement {
-    return new Element(tagName)
+    return createHTMLElement(tagName)
   }
 
   createComment(data: string): IComment {
@@ -201,14 +243,24 @@ export class Document extends Node implements IDocument {
     const documentElement = this.documentElement
     if (!documentElement) return null
 
-    for (let child = documentElement.firstChild; child; child = child.nextSibling) {
+    for (
+      let child = getCanonicalFirstChild<Node>(documentElement) ?? null;
+      child;
+      child = getCanonicalNextSibling<Node>(child) ?? null
+    ) {
+      const namespaceURI = getCanonicalElementMetadataField(
+        child as unknown as IElement,
+        ElementMetadataField.NAMESPACE_URI
+      )
+      const childLocalName = getCanonicalElementMetadataField(
+        child as unknown as IElement,
+        ElementMetadataField.LOCAL_NAME
+      )
       if (
-        child.nodeType === NodeType.ELEMENT_NODE &&
-        (child as IElement).namespaceURI === HTML_NAMESPACE &&
-        ((child as IElement).localName === localName ||
-          (child as IElement).localName === alternateName)
+        namespaceURI === HTML_NAMESPACE &&
+        (childLocalName === localName || childLocalName === alternateName)
       ) {
-        return child as IElement
+        return child as unknown as IElement
       }
     }
     return null

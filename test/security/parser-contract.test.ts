@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { Document, Element } from '../../src/index.js'
+import {
+  Document,
+  DocumentType,
+  Element,
+  HTML_NAMESPACE,
+  Node,
+  NodeType,
+} from '../../src/index.js'
 import { DOMParser } from '../../src/parser/parser.js'
 import { serializeElement } from '../../src/utils/serializer.js'
 
@@ -57,6 +64,32 @@ describe('Parser security contract', () => {
     expect(element.attributes.length).toBe(0)
   })
 
+  it('rejects base Node instances that impersonate concrete element nodes', () => {
+    const host = new Element('div')
+    const forged = Object.assign(
+      new Node(NodeType.ELEMENT_NODE, 'FORGED'),
+      {
+        namespaceURI: HTML_NAMESPACE,
+        localName: 'img src=x onerror=alert(1)',
+        attributes: [],
+      }
+    )
+
+    expect(() => host.appendChild(forged)).toThrow('concrete neo.dom node')
+    expect(host.innerHTML).toBe('')
+    expect(forged.parentNode).toBeNull()
+  })
+
+  it('rejects base Node instances as mutation parents', () => {
+    const forgedParent = new Node(NodeType.ELEMENT_NODE, 'FORGED')
+    const child = new Element('span')
+
+    expect(() => forgedParent.appendChild(child)).toThrow('concrete neo.dom node')
+    expect(() => forgedParent.insertBefore(child, null)).toThrow('concrete neo.dom node')
+    expect(child.parentNode).toBeNull()
+    expect(forgedParent.firstChild).toBeNull()
+  })
+
   it('preserves valid custom, Unicode, and namespace-prefixed names', () => {
     const custom = new Element('custom-element')
     const unicode = new Element('étiquette')
@@ -95,6 +128,18 @@ describe('Parser security contract', () => {
     expect(Reflect.set(attribute, 'name', 'x onmouseover')).toBe(false)
     expect(element.localName).toBe('div')
     expect(attribute.name).toBe('data-safe')
+  })
+
+  it('keeps doctype metadata immutable at runtime', () => {
+    const declaration = new DocumentType('html', 'public-id', 'system-id')
+
+    expect(Reflect.set(declaration, 'name', 'svg')).toBe(false)
+    expect(Reflect.set(declaration, 'publicId', 'changed')).toBe(false)
+    expect(Reflect.set(declaration, 'systemId', 'changed')).toBe(false)
+    expect(declaration.name).toBe('html')
+    expect(declaration.publicId).toBe('public-id')
+    expect(declaration.systemId).toBe('system-id')
+    expect(declaration.nodeName).toBe('html')
   })
 
   it('stores a validated copy of attributes supplied through NamedNodeMap', () => {

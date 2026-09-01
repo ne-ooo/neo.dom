@@ -59,9 +59,26 @@ Inserting a `DocumentFragment` moves all of its children and leaves the fragment
 
 Structural node metadata is read-only. Tree validation uses canonical metadata if application code shadows a public getter.
 
+Base `Node` instances cannot act as tree-mutation parents. Concrete DOM node classes provide the supported parent behavior.
+
 Numeric collection access matches `item()` access. Writes to numeric `NodeList` and `NamedNodeMap` properties fail.
 
 `NamedNodeMap.setNamedItem()` validates and copies its input. Changes to the input object do not change the stored attribute.
+
+HTML template descendants are in the inert `template.content` fragment. Normal document traversal does not enter this separate fragment.
+Tree mutations also reject direct and mutual cycles through a template-content host relationship.
+
+```typescript
+const template = document.createElement('template')
+template.content.appendChild(document.createElement('p'))
+
+template.firstChild // null
+template.innerHTML  // '<p></p>'
+```
+
+Serialization rejects programmatic comment data that can close its comment. It also rejects doctype fields that contain unsafe markup delimiters.
+
+The doctype serializer selects single or double quotes for valid identifiers. These checks protect markup structure but do not sanitize HTML.
 
 The `innerHTML` getter serializes children. The setter creates a text node and does not parse markup.
 

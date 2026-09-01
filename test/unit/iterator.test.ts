@@ -484,6 +484,27 @@ describe('NodeIterator', () => {
       expect(textRoot.firstChild?.nodeValue).toBe('new')
     })
 
+    it('runs pre-removal steps for same-node insert and replace operations', () => {
+      for (const mutate of [
+        (root: Element, child: Element) => root.insertBefore(child, child),
+        (root: Element, child: Element) => root.replaceChild(child, child),
+      ]) {
+        const root = new Element('root')
+        const first = new Element('first')
+        const second = new Element('second')
+        root.appendChild(first)
+        root.appendChild(second)
+        const iterator = new NodeIterator(root, NodeFilter.SHOW_ALL, null)
+        expect(iterator.nextNode()).toBe(root)
+        expect(iterator.nextNode()).toBe(first)
+
+        mutate(root, first)
+
+        expect(iterator.nextNode()).toBe(first)
+        expect(iterator.nextNode()).toBe(second)
+      }
+    })
+
     it('adjusts references during fragment and bulk replaceWith detachment', () => {
       const fragment = new DocumentFragment()
       const fragmentFirst = new Element('first')
@@ -512,6 +533,34 @@ describe('NodeIterator', () => {
       target.replaceWith(first, second)
       expect(iterator.nextNode()).toBe(first)
       expect(iterator.nextNode()).toBe(second)
+    })
+
+    it('uses canonical tree links when public structural getters are shadowed', () => {
+      const root = new Element('root')
+      const middle = new Element('middle')
+      const child = new Element('child')
+      const tail = new Element('tail')
+      root.appendChild(middle)
+      middle.appendChild(child)
+      root.appendChild(tail)
+
+      const iterator = new NodeIterator(root, NodeFilter.SHOW_ALL, null)
+      expect(iterator.nextNode()).toBe(root)
+      expect(iterator.nextNode()).toBe(middle)
+      expect(iterator.nextNode()).toBe(child)
+
+      Object.defineProperties(middle, {
+        parentNode: { value: null, configurable: true },
+        nextSibling: { value: null, configurable: true },
+      })
+      Object.defineProperties(child, {
+        parentNode: { value: null, configurable: true },
+        previousSibling: { value: tail, configurable: true },
+      })
+
+      middle.removeChild(child)
+      expect(iterator.referenceNode).toBe(middle)
+      expect(iterator.nextNode()).toBe(tail)
     })
   })
 

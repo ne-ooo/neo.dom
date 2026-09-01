@@ -5,6 +5,10 @@
  */
 
 import type { Node as INode, TreeWalker as ITreeWalker, NodeFilterCallback } from '../types.js'
+import {
+  type CanonicalTraversalReader,
+  getCanonicalTraversalReader,
+} from '../dom/node-state.js'
 import { NodeFilter } from '../utils/constants.js'
 
 export class TreeWalker implements ITreeWalker {
@@ -12,28 +16,35 @@ export class TreeWalker implements ITreeWalker {
   readonly whatToShow: number
   readonly filter: NodeFilterCallback | null
   currentNode: INode
+  readonly #rootCanonicalReader: CanonicalTraversalReader | undefined
+  #activeCanonicalReader: CanonicalTraversalReader | undefined
 
   constructor(root: INode, whatToShow: number, filter: NodeFilterCallback | null = null) {
     this.root = root
     this.whatToShow = whatToShow
     this.filter = filter
     this.currentNode = root
+    this.#rootCanonicalReader = getCanonicalTraversalReader(root)
+    this.#activeCanonicalReader = this.#rootCanonicalReader
   }
 
   parentNode(): INode | null {
-    let node = this.currentNode.parentNode
-    while (node && node !== this.root.parentNode) {
+    this.#prepareTraversal()
+    let node = this.#parentNode(this.currentNode)
+    const rootParent = this.#parentNode(this.root)
+    while (node && node !== rootParent) {
       if (this.filterNode(node) === NodeFilter.FILTER_ACCEPT) {
         this.currentNode = node
         return node
       }
-      node = node.parentNode
+      node = this.#parentNode(node)
     }
     return null
   }
 
   firstChild(): INode | null {
-    for (let child = this.currentNode.firstChild; child; child = child.nextSibling) {
+    this.#prepareTraversal()
+    for (let child = this.#firstChild(this.currentNode); child; child = this.#nextSibling(child)) {
       const candidate = this.firstPromotedNode(child)
       if (candidate) {
         this.currentNode = candidate
@@ -44,7 +55,8 @@ export class TreeWalker implements ITreeWalker {
   }
 
   lastChild(): INode | null {
-    for (let child = this.currentNode.lastChild; child; child = child.previousSibling) {
+    this.#prepareTraversal()
+    for (let child = this.#lastChild(this.currentNode); child; child = this.#previousSibling(child)) {
       const candidate = this.lastPromotedNode(child)
       if (candidate) {
         this.currentNode = candidate
@@ -63,10 +75,11 @@ export class TreeWalker implements ITreeWalker {
   }
 
   previousNode(): INode | null {
+    this.#prepareTraversal()
     let node = this.currentNode
 
     while (node !== this.root) {
-      for (let sibling = node.previousSibling; sibling; sibling = sibling.previousSibling) {
+      for (let sibling = this.#previousSibling(node); sibling; sibling = this.#previousSibling(sibling)) {
         const candidate = this.lastAcceptedInSubtree(sibling)
         if (candidate) {
           this.currentNode = candidate
@@ -74,8 +87,8 @@ export class TreeWalker implements ITreeWalker {
         }
       }
 
-      const parent = node.parentNode
-      if (!parent || parent === this.root.parentNode) return null
+      const parent = this.#parentNode(node)
+      if (!parent || parent === this.#parentNode(this.root)) return null
       node = parent
 
       if (this.filterNode(node) === NodeFilter.FILTER_ACCEPT) {
@@ -88,6 +101,7 @@ export class TreeWalker implements ITreeWalker {
   }
 
   nextNode(): INode | null {
+    this.#prepareTraversal()
     let node = this.currentNode
     let descend = true
 
@@ -107,11 +121,12 @@ export class TreeWalker implements ITreeWalker {
   }
 
   private traverseSiblings(next: boolean): INode | null {
+    this.#prepareTraversal()
     let node = this.currentNode
     if (node === this.root) return null
 
     while (node !== this.root) {
-      let sibling = next ? node.nextSibling : node.previousSibling
+      let sibling = next ? this.#nextSibling(node) : this.#previousSibling(node)
       while (sibling) {
         const candidate = next
           ? this.firstPromotedNode(sibling)
@@ -120,10 +135,10 @@ export class TreeWalker implements ITreeWalker {
           this.currentNode = candidate
           return candidate
         }
-        sibling = next ? sibling.nextSibling : sibling.previousSibling
+        sibling = next ? this.#nextSibling(sibling) : this.#previousSibling(sibling)
       }
 
-      const parent = node.parentNode
+      const parent = this.#parentNode(node)
       if (!parent || parent === this.root) return null
       const parentResult = this.filterNode(parent)
       if (parentResult !== NodeFilter.FILTER_SKIP) return null
@@ -144,7 +159,7 @@ export class TreeWalker implements ITreeWalker {
       if (result === NodeFilter.FILTER_ACCEPT) return node
       if (result === NodeFilter.FILTER_REJECT) continue
 
-      for (let child = node.lastChild; child; child = child.previousSibling) {
+      for (let child = this.#lastChild(node); child; child = this.#previousSibling(child)) {
         stack.push(child)
       }
     }
@@ -162,7 +177,7 @@ export class TreeWalker implements ITreeWalker {
       if (result === NodeFilter.FILTER_ACCEPT) return node
       if (result === NodeFilter.FILTER_REJECT) continue
 
-      for (let child = node.firstChild; child; child = child.nextSibling) {
+      for (let child = this.#firstChild(node); child; child = this.#nextSibling(child)) {
         stack.push(child)
       }
     }
@@ -188,12 +203,12 @@ export class TreeWalker implements ITreeWalker {
           stack.pop()
           continue
         }
-        frame.nextChild = frame.node.lastChild
+        frame.nextChild = this.#lastChild(frame.node)
       }
 
       const child = frame.nextChild
       if (child) {
-        frame.nextChild = child.previousSibling
+        frame.nextChild = this.#previousSibling(child)
         stack.push({ node: child, result: null, nextChild: null })
         continue
       }
@@ -206,12 +221,14 @@ export class TreeWalker implements ITreeWalker {
   }
 
   private nextStructuralNode(node: INode, descend: boolean): INode | null {
-    if (descend && node.firstChild) return node.firstChild
+    const firstChild = descend ? this.#firstChild(node) : null
+    if (firstChild) return firstChild
 
     let current: INode | null = node
     while (current && current !== this.root) {
-      if (current.nextSibling) return current.nextSibling
-      current = current.parentNode
+      const nextSibling = this.#nextSibling(current)
+      if (nextSibling) return nextSibling
+      current = this.#parentNode(current)
     }
     return null
   }
@@ -223,8 +240,51 @@ export class TreeWalker implements ITreeWalker {
 
   private matchesWhatToShow(node: INode): boolean {
     if (this.whatToShow === NodeFilter.SHOW_ALL) return true
-    const nodeTypeMask = 1 << (node.nodeType - 1)
+    const nodeTypeMask = 1 << (this.#nodeType(node) - 1)
     return (this.whatToShow & nodeTypeMask) !== 0
+  }
+
+  #prepareTraversal(): void {
+    this.#activeCanonicalReader = this.#rootCanonicalReader &&
+      getCanonicalTraversalReader(this.currentNode)
+      ? this.#rootCanonicalReader
+      : undefined
+  }
+
+  #nodeType(node: INode): number {
+    return this.#activeCanonicalReader
+      ? this.#activeCanonicalReader.nodeType(node)
+      : node.nodeType
+  }
+
+  #parentNode(node: INode): INode | null {
+    return this.#activeCanonicalReader
+      ? this.#activeCanonicalReader.parentNode<INode>(node)
+      : node.parentNode
+  }
+
+  #firstChild(node: INode): INode | null {
+    return this.#activeCanonicalReader
+      ? this.#activeCanonicalReader.firstChild<INode>(node)
+      : node.firstChild
+  }
+
+  #lastChild(node: INode): INode | null {
+    return this.#activeCanonicalReader
+      ? this.#activeCanonicalReader.lastChild<INode>(node)
+      : node.lastChild
+  }
+
+  #nextSibling(node: INode): INode | null {
+    return this.#activeCanonicalReader
+      ? this.#activeCanonicalReader.nextSibling<INode>(node)
+      : node.nextSibling
+  }
+
+  #previousSibling(node: INode): INode | null {
+    return this.#activeCanonicalReader
+      ? this.#activeCanonicalReader.previousSibling<INode>(node)
+      : node.previousSibling
   }
 }
 
